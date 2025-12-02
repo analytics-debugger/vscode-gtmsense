@@ -1,0 +1,198 @@
+{
+  "name": "gtmsense",
+  "displayName": "GTMSense",
+  "publisher": "analytics-debugger",
+  "description": "Edit Google Tag Manager Custom HTML tags and JavaScript variables directly in VS Code",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.106.1"
+  },
+  "sponsor": {
+    "url": "https://community.analytics-debugger.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/analytics-debugger/vscode-gtmsense"
+  },
+  "license": "MIT",
+  "categories": [
+    "Other"
+  ],
+  "icon": "images/icon.png",
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "gtmsense.loadContainer",
+        "title": "GTM-SENSE: Load Container",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gtmsense.unloadContainer",
+        "title": "GTM-SENSE: Unload Container",
+        "icon": "$(close)"
+      },
+      {
+        "command": "gtmsense.createTag",
+        "title": "GTM-SENSE: Create Custom HTML Tag",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gtmsense.createVariable",
+        "title": "GTM-SENSE: Create Custom JavaScript Variable",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gtmsense.pushChanges",
+        "title": "GTM-SENSE: Push Changes",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "gtmsense.discardChanges",
+        "title": "GTM-SENSE: Discard Changes",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "gtmsense.deleteItem",
+        "title": "GTM-SENSE: Delete",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "gtmsense.discardItemChanges",
+        "title": "GTM-SENSE: Discard Changes",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "gtmsense.signOut",
+        "title": "GTM-SENSE: Sign Out",
+        "icon": "$(sign-out)"
+      }
+    ],
+    "languages": [
+      {
+        "id": "gtm-javascript",
+        "aliases": ["GTM JavaScript", "gtmjs"],
+        "extensions": [],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "gtm-javascript",
+        "scopeName": "source.gtm.js",
+        "path": "./syntaxes/gtm-javascript.tmLanguage.json"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gtm-explorer",
+          "title": "GTMSense",
+          "icon": "$(tag)"
+        }
+      ]
+    },
+    "views": {
+      "gtm-explorer": [
+        {
+          "id": "gtmContainers",
+          "name": "Containers",
+          "icon": "$(tag)"
+        },
+        {
+          "id": "gtmAccount",
+          "name": "Account",
+          "icon": "$(account)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "gtmContainers",
+        "contents": "No containers loaded.\n[Load Container](command:gtmsense.loadContainer)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "gtmsense.loadContainer",
+          "when": "view == gtmContainers",
+          "group": "navigation"
+        },
+        {
+          "command": "gtmsense.pushChanges",
+          "when": "view == gtmContainers",
+          "group": "navigation"
+        },
+        {
+          "command": "gtmsense.discardChanges",
+          "when": "view == gtmContainers",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "gtmsense.unloadContainer",
+          "when": "view == gtmContainers && viewItem == container",
+          "group": "inline"
+        },
+        {
+          "command": "gtmsense.createTag",
+          "when": "view == gtmContainers && viewItem == folder && viewItemFolderName == tags"
+        },
+        {
+          "command": "gtmsense.createVariable",
+          "when": "view == gtmContainers && viewItem == folder && viewItemFolderName == variables"
+        },
+        {
+          "command": "gtmsense.createTag",
+          "when": "view == gtmContainers && viewItem == container",
+          "group": "1_create"
+        },
+        {
+          "command": "gtmsense.createVariable",
+          "when": "view == gtmContainers && viewItem == container",
+          "group": "1_create"
+        },
+        {
+          "command": "gtmsense.deleteItem",
+          "when": "view == gtmContainers && viewItem =~ /^file/",
+          "group": "2_delete"
+        },
+        {
+          "command": "gtmsense.discardItemChanges",
+          "when": "view == gtmContainers && viewItem == file-modified",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run package",
+    "compile": "pnpm run check-types && pnpm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "pnpm run check-types && pnpm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test",
+    "vsix": "vsce package -o releases/"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.106.1",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.46.3",
+    "eslint": "^9.39.1",
+    "esbuild": "^0.27.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}

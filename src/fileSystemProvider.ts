@@ -1,0 +1,473 @@
+import * as vscode from 'vscode';
+import {
+	GtmTag,
+	GtmVariable,
+	listTags,
+	listVariables,
+	updateTag,
+	updateVariable,
+	deleteTag,
+	deleteVariable,
+	extractCode,
+	updateCode,
+} from './gtmClient';
+
+interface FileEntry {
+	type: 'file';
+	name: string;
+	data: Uint8Array;
+	ctime: number;
+	mtime: number;
+	gtmItem: GtmTag | GtmVariable;
+	itemType: 'tag' | 'variable';
+}
+
+interface DirectoryEntry {
+	type: 'directory';
+	name: string;
+	ctime: number;
+	mtime: number;
+	entries: Map<string, FileEntry | DirectoryEntry>;
+}
+
+type Entry = FileEntry | DirectoryEntry;
+
+export interface ContainerInfo {
+	name: string;
+	publicId: string; // GTM-XXXXXX
+	workspacePath: string;
+	workspaceName: string;
+	key: string; // Unique key: "containerName (workspaceName)"
+}
+
+export interface ModifiedFile {
+	uri: vscode.Uri;
+	containerName: string;
+	folder: 'tags' | 'variables';
+	fileName: string;
+	itemType: 'tag' | 'variable';
+	gtmItem: GtmTag | GtmVariable;
+	newCode: string;
+}
+
+export class GtmFileSystemProvider implements vscode.FileSystemProvider {
+	private root: DirectoryEntry;
+	private containers: Map<string, ContainerInfo> = new Map();
+	private variableNames: Map<string, string[]> = new Map(); // containerName -> variable names
+	private modifiedFiles: Map<string, ModifiedFile> = new Map(); // uri.toString() -> ModifiedFile
+
+	private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
+	readonly onDidChangeFile: vscode.Event<vscode.FileChangeEvent[]> = this._emitter.event;
+
+	private _onDidChangeModified = new vscode.EventEmitter<void>();
+	readonly onDidChangeModified: vscode.Event<void> = this._onDidChangeModified.event;
+
+	constructor() {
+		this.root = {
+			type: 'directory',
+			name: '',
+			ctime: Date.now(),
+			mtime: Date.now(),
+			entries: new Map(),
+		};
+	}
+
+	async addContainer(containerName: string, publicId: string, workspacePath: string, workspaceName: string): Promise<void> {
+		console.log(`Adding container: ${containerName} (${publicId}, workspace: ${workspaceName})`);
+
+		// Use a unique key for container + workspace combination
+		const containerKey = `${containerName} (${workspaceName})`;
+
+		// Create container directory
+		const containerDir: DirectoryEntry = {
+			type: 'directory',
+			name: containerKey,
+			ctime: Date.now(),
+			mtime: Date.now(),
+			entries: new Map(),
+		};
+
+		// Create tags and variables subdirectories
+		const tagsDir: DirectoryEntry = {
+			type: 'directory',
+			name: 'tags',
+			ctime: Date.now(),
+			mtime: Date.now(),
+			entries: new Map(),
+		};
+
+		const variablesDir: DirectoryEntry = {
+			type: 'directory',
+			name: 'variables',
+			ctime: Date.now(),
+			mtime: Date.now(),
+			entries: new Map(),
+		};
+
+		// Fetch tags and variables
+		const [tags, variables] = await Promise.all([
+			listTags(workspacePath),
+			listVariables(workspacePath),
+		]);
+
+		console.log(`Found ${tags.length} tags and ${variables.length} variables for ${containerName}`);
+
+		// Add tags as files
+		for (const tag of tags) {
+			const code = extractCode(tag);
+			console.log(`Tag "${tag.name}" (${tag.type}): ${code ? 'has code' : 'no code'}`);
+			if (code) {
+				const fileName = this.sanitizeFileName(tag.name) + '.js';
+				const entry: FileEntry = {
+					type: 'file',
+					name: fileName,
+					data: new TextEncoder().encode(code),
+					ctime: Date.now(),
+					mtime: Date.now(),
+					gtmItem: tag,
+					itemType: 'tag',
+				};
+				tagsDir.entries.set(fileName, entry);
+			}
+		}
+
+		// Store all variable names for autocomplete (before filtering by code)
+		this.variableNames.set(containerKey, variables.map(v => v.name));
+
+		// Add variables as files
+		for (const variable of variables) {
+			const code = extractCode(variable);
+			console.log(`Variable "${variable.name}" (${variable.type}): ${code ? 'has code' : 'no code'}`);
+			if (code) {
+				const fileName = this.sanitizeFileName(variable.name) + '.js';
+				const entry: FileEntry = {
+					type: 'file',
+					name: fileName,
+					data: new TextEncoder().encode(code),
+					ctime: Date.now(),
+					mtime: Date.now(),
+					gtmItem: variable,
+					itemType: 'variable',
+				};
+				variablesDir.entries.set(fileName, entry);
+			}
+		}
+
+		containerDir.entries.set('tags', tagsDir);
+		containerDir.entries.set('variables', variablesDir);
+
+		// Add container to root
+		this.root.entries.set(containerKey, containerDir);
+		this.containers.set(containerKey, { name: containerName, publicId, workspacePath, workspaceName, key: containerKey });
+
+		console.log(`Loaded ${tagsDir.entries.size} tags and ${variablesDir.entries.size} variables for ${containerKey}`);
+
+		// Fire change events
+		this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri: vscode.Uri.parse('gtmsense:/') }]);
+	}
+
+	removeContainer(containerName: string): void {
+		this.root.entries.delete(containerName);
+		this.containers.delete(containerName);
+		this.variableNames.delete(containerName);
+		this._emitter.fire([{ type: vscode.FileChangeType.Deleted, uri: vscode.Uri.parse(`gtmsense:/${containerName}`) }]);
+	}
+
+	getContainers(): ContainerInfo[] {
+		return Array.from(this.containers.values());
+	}
+
+	hasContainer(containerName: string, workspaceName: string): boolean {
+		const containerKey = `${containerName} (${workspaceName})`;
+		return this.containers.has(containerKey);
+	}
+
+	getVariableNames(containerName: string): string[] {
+		return this.variableNames.get(containerName) || [];
+	}
+
+	getAllVariableNames(): string[] {
+		const allNames = new Set<string>();
+		for (const names of this.variableNames.values()) {
+			for (const name of names) {
+				allNames.add(name);
+			}
+		}
+		return Array.from(allNames);
+	}
+
+	getContainerFromUri(uri: vscode.Uri): string | undefined {
+		const parts = uri.path.split('/').filter(p => p);
+		return parts.length > 0 ? parts[0] : undefined;
+	}
+
+	sanitizeFileName(name: string): string {
+		return name.replace(/[<>:"/\\|?*]/g, '_').trim();
+	}
+
+	addFileEntry(containerName: string, folder: 'tags' | 'variables', item: GtmTag | GtmVariable, itemType: 'tag' | 'variable'): void {
+		const containerDir = this.root.entries.get(containerName);
+		if (!containerDir || containerDir.type !== 'directory') {
+			throw new Error(`Container ${containerName} not found`);
+		}
+
+		const folderDir = containerDir.entries.get(folder);
+		if (!folderDir || folderDir.type !== 'directory') {
+			throw new Error(`Folder ${folder} not found`);
+		}
+
+		const code = extractCode(item);
+		const fileName = this.sanitizeFileName(item.name) + '.js';
+		const entry: FileEntry = {
+			type: 'file',
+			name: fileName,
+			data: new TextEncoder().encode(code),
+			ctime: Date.now(),
+			mtime: Date.now(),
+			gtmItem: item,
+			itemType,
+		};
+		folderDir.entries.set(fileName, entry);
+
+		// Update variable names cache if it's a variable
+		if (itemType === 'variable') {
+			const names = this.variableNames.get(containerName) || [];
+			names.push(item.name);
+			this.variableNames.set(containerName, names);
+		}
+
+		this._emitter.fire([{ type: vscode.FileChangeType.Created, uri: vscode.Uri.parse(`gtmsense:/${containerName}/${folder}/${fileName}`) }]);
+	}
+
+	private lookup(uri: vscode.Uri): Entry | undefined {
+		const parts = uri.path.split('/').filter(p => p);
+		let entry: Entry = this.root;
+
+		for (const part of parts) {
+			if (entry.type !== 'directory') {
+				return undefined;
+			}
+			const child = entry.entries.get(part);
+			if (!child) {
+				return undefined;
+			}
+			entry = child;
+		}
+
+		return entry;
+	}
+
+	private lookupAsFile(uri: vscode.Uri): FileEntry {
+		const entry = this.lookup(uri);
+		if (!entry || entry.type !== 'file') {
+			throw vscode.FileSystemError.FileNotFound(uri);
+		}
+		return entry;
+	}
+
+	private lookupAsDirectory(uri: vscode.Uri): DirectoryEntry {
+		const entry = this.lookup(uri);
+		if (!entry || entry.type !== 'directory') {
+			throw vscode.FileSystemError.FileNotADirectory(uri);
+		}
+		return entry;
+	}
+
+	watch(): vscode.Disposable {
+		return new vscode.Disposable(() => {});
+	}
+
+	stat(uri: vscode.Uri): vscode.FileStat {
+		const entry = this.lookup(uri);
+		if (!entry) {
+			throw vscode.FileSystemError.FileNotFound(uri);
+		}
+
+		return {
+			type: entry.type === 'directory' ? vscode.FileType.Directory : vscode.FileType.File,
+			ctime: entry.ctime,
+			mtime: entry.mtime,
+			size: entry.type === 'file' ? entry.data.length : 0,
+		};
+	}
+
+	readDirectory(uri: vscode.Uri): [string, vscode.FileType][] {
+		const entry = this.lookupAsDirectory(uri);
+		const result: [string, vscode.FileType][] = [];
+
+		for (const [name, child] of entry.entries) {
+			result.push([name, child.type === 'directory' ? vscode.FileType.Directory : vscode.FileType.File]);
+		}
+
+		return result;
+	}
+
+	readFile(uri: vscode.Uri): Uint8Array {
+		const entry = this.lookupAsFile(uri);
+		return entry.data;
+	}
+
+	async writeFile(uri: vscode.Uri, content: Uint8Array): Promise<void> {
+		const entry = this.lookupAsFile(uri);
+		const newCode = new TextDecoder().decode(content);
+		const originalCode = extractCode(entry.gtmItem);
+
+		// Update local cache
+		entry.data = content;
+		entry.mtime = Date.now();
+
+		// Track as modified (or remove if reverted to original)
+		const parts = uri.path.split('/').filter(p => p);
+		const containerName = parts[0];
+		const folder = parts[1] as 'tags' | 'variables';
+
+		if (newCode !== originalCode) {
+			this.modifiedFiles.set(uri.toString(), {
+				uri,
+				containerName,
+				folder,
+				fileName: entry.name,
+				itemType: entry.itemType,
+				gtmItem: entry.gtmItem,
+				newCode,
+			});
+		} else {
+			this.modifiedFiles.delete(uri.toString());
+		}
+
+		this._onDidChangeModified.fire();
+		this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+	}
+
+	createDirectory(): void {
+		throw vscode.FileSystemError.NoPermissions('Cannot create directories in GTM workspace');
+	}
+
+	delete(): void {
+		throw vscode.FileSystemError.NoPermissions('Use GTM: Delete Tag/Variable command instead');
+	}
+
+	rename(): void {
+		throw vscode.FileSystemError.NoPermissions('Cannot rename files in GTM workspace');
+	}
+
+	async deleteFile(uri: vscode.Uri): Promise<void> {
+		const entry = this.lookupAsFile(uri);
+		const parts = uri.path.split('/').filter(p => p);
+		const containerName = parts[0];
+		const folder = parts[1] as 'tags' | 'variables';
+
+		// Delete from GTM
+		if (entry.itemType === 'tag') {
+			await deleteTag(entry.gtmItem.path);
+		} else {
+			await deleteVariable(entry.gtmItem.path);
+		}
+
+		// Remove from local cache
+		const containerDir = this.root.entries.get(containerName);
+		if (containerDir && containerDir.type === 'directory') {
+			const folderDir = containerDir.entries.get(folder);
+			if (folderDir && folderDir.type === 'directory') {
+				folderDir.entries.delete(entry.name);
+			}
+		}
+
+		// Remove from modified files if present
+		this.modifiedFiles.delete(uri.toString());
+
+		// Update variable names cache if it was a variable
+		if (entry.itemType === 'variable') {
+			const names = this.variableNames.get(containerName) || [];
+			const itemName = (entry.gtmItem as GtmVariable).name;
+			this.variableNames.set(containerName, names.filter(n => n !== itemName));
+		}
+
+		this._onDidChangeModified.fire();
+		this._emitter.fire([{ type: vscode.FileChangeType.Deleted, uri }]);
+	}
+
+	getFileEntry(uri: vscode.Uri): FileEntry | undefined {
+		const entry = this.lookup(uri);
+		if (entry && entry.type === 'file') {
+			return entry;
+		}
+		return undefined;
+	}
+
+	getModifiedFiles(): ModifiedFile[] {
+		return Array.from(this.modifiedFiles.values());
+	}
+
+	getModifiedFilesForContainer(containerName: string): ModifiedFile[] {
+		return this.getModifiedFiles().filter(f => f.containerName === containerName);
+	}
+
+	isModified(uri: vscode.Uri): boolean {
+		return this.modifiedFiles.has(uri.toString());
+	}
+
+	hasModifiedFiles(): boolean {
+		return this.modifiedFiles.size > 0;
+	}
+
+	async pushChanges(): Promise<{ success: number; failed: number }> {
+		let success = 0;
+		let failed = 0;
+
+		for (const modified of this.modifiedFiles.values()) {
+			const updatedItem = updateCode(modified.gtmItem, modified.newCode);
+
+			try {
+				if (modified.itemType === 'tag') {
+					await updateTag(modified.gtmItem.path, updatedItem as GtmTag);
+				} else {
+					await updateVariable(modified.gtmItem.path, updatedItem as GtmVariable);
+				}
+
+				// Update the stored gtmItem with the new code
+				const entry = this.lookupAsFile(modified.uri);
+				entry.gtmItem = updateCode(entry.gtmItem, modified.newCode) as GtmTag | GtmVariable;
+
+				success++;
+			} catch (error) {
+				console.error(`Failed to push ${modified.fileName}: ${error}`);
+				failed++;
+			}
+		}
+
+		// Clear modified files on success
+		if (failed === 0) {
+			this.modifiedFiles.clear();
+			this._onDidChangeModified.fire();
+		}
+
+		return { success, failed };
+	}
+
+	discardChanges(uri?: vscode.Uri): void {
+		if (uri) {
+			const modified = this.modifiedFiles.get(uri.toString());
+			if (modified) {
+				// Restore original content
+				const entry = this.lookupAsFile(uri);
+				const originalCode = extractCode(entry.gtmItem);
+				entry.data = new TextEncoder().encode(originalCode);
+				entry.mtime = Date.now();
+				this.modifiedFiles.delete(uri.toString());
+				this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+			}
+		} else {
+			// Discard all changes
+			for (const modified of this.modifiedFiles.values()) {
+				const entry = this.lookupAsFile(modified.uri);
+				const originalCode = extractCode(entry.gtmItem);
+				entry.data = new TextEncoder().encode(originalCode);
+				entry.mtime = Date.now();
+				this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri: modified.uri }]);
+			}
+			this.modifiedFiles.clear();
+		}
+		this._onDidChangeModified.fire();
+	}
+}
