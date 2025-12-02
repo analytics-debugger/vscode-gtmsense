@@ -1,0 +1,23 @@
+{
+  "name": "GTM JavaScript",
+  "scopeName": "source.gtm.js",
+  "patterns": [
+    {
+      "include": "#gtm-variable"
+    },
+    {
+      "include": "source.js"
+    }
+  ],
+  "repository": {
+    "gtm-variable": {
+      "name": "variable.other.gtm",
+      "match": "\\{\\{[^}]+\\}\\}",
+      "captures": {
+        "0": {
+          "name": "variable.other.gtm.bracket"
+        }
+      }
+    }
+  }
+}
