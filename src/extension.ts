@@ -11,12 +11,12 @@ import { listAccounts, listContainers, listWorkspaces, createWorkspace, createTa
 let fsProvider: GtmFileSystemProvider;
 let sidebarProvider: GtmSidebarProvider;
 let diagnosticsProvider: GtmDiagnosticsProvider;
-export let outputChannel: vscode.OutputChannel;
+export let outputChannel: vscode.LogOutputChannel;
 
 export async function activate(context: vscode.ExtensionContext) {
 	outputChannel = vscode.window.createOutputChannel('GTMSense', { log: true });
 	const version = context.extension.packageJSON.version;
-	outputChannel.appendLine(`GTMSense Loaded: v${version} | VSCode v${vscode.version}`);	
+	outputChannel.info(`GTMSense Loaded:v${version} | VSCode v${vscode.version}`);
 
 	// Close any previously opened gtmsense:// files since they won't work after restart
 	const gtmTabs = vscode.window.tabGroups.all
@@ -123,6 +123,8 @@ export async function activate(context: vscode.ExtensionContext) {
 		try {
 			// Step 1: Select account
 			const accounts = await listAccounts();
+			outputChannel.info(`SUCCESS: Fetched Accounts List`, accounts);
+			
 			if (accounts.length === 0) {
 				vscode.window.showErrorMessage('No GTM accounts found');
 				return;
@@ -197,6 +199,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 			vscode.window.showInformationMessage(`Loaded container: ${containerPick.label}`);
 		} catch (error) {
+			
 			vscode.window.showErrorMessage(`Failed to load container: ${error}`);
 		}
 	});
@@ -330,9 +333,15 @@ export async function activate(context: vscode.ExtensionContext) {
 			if (result.failed === 0) {
 				vscode.window.showInformationMessage(`Successfully pushed ${result.success} file(s) to GTM`);
 			} else {
-				vscode.window.showWarningMessage(`Pushed ${result.success} file(s), ${result.failed} failed`);
+				for (const err of result.errors) {
+					outputChannel.error(`${err.fileName}: ${err.error}`);
+				}
+				outputChannel.show();
+				vscode.window.showErrorMessage(`Push failed: ${result.success} succeeded, ${result.failed} failed. See output for details.`);
 			}
 		} catch (error) {
+			outputChannel.error(`Failed to push changes: ${error}`);
+			outputChannel.show();
 			vscode.window.showErrorMessage(`Failed to push changes: ${error}`);
 		}
 	});
