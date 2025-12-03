@@ -191,7 +191,10 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vscode-test",
-    "vsix": "vsce package -o releases/"
+    "vsix": "vsce package -o releases/",
+    "release:patch": "pnpm version patch && git checkout -b v$(node -p \"require('./package.json').version\")",
+    "release:minor": "pnpm version minor && git checkout -b v$(node -p \"require('./package.json').version\")",
+    "release:major": "pnpm version major && git checkout -b v$(node -p \"require('./package.json').version\")"
   },
   "devDependencies": {
     "@types/vscode": "^1.106.1",
