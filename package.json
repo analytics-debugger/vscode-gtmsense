@@ -191,7 +191,11 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vscode-test",
-    "vsix": "vsce package -o releases/"
+    "vsix": "vsce package -o releases/",
+    "bump:patch": "pnpm version patch --no-git-tag-version && git add package.json && git commit -m \"chore: bump to $(node -p \"require('./package.json').version\")\" && git push",
+    "bump:minor": "pnpm version minor --no-git-tag-version && git add package.json && git commit -m \"chore: bump to $(node -p \"require('./package.json').version\")\" && git push",
+    "bump:major": "pnpm version major --no-git-tag-version && git add package.json && git commit -m \"chore: bump to $(node -p \"require('./package.json').version\")\" && git push",
+    "release": "node scripts/release.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.106.1",
