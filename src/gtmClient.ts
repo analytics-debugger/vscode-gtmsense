@@ -47,6 +47,14 @@ export interface GtmAccount {
 	path: string;
 }
 
+export interface GtmTemplate {
+	templateId: string;
+	name: string;
+	fingerprint: string;
+	path: string;
+	templateData: string;
+}
+
 async function gtmFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
 	const token = await getAccessToken();
 	const response = await fetch(`${GTM_API_BASE}${endpoint}`, {
@@ -91,6 +99,11 @@ export async function listVariables(workspacePath: string): Promise<GtmVariable[
 	return result.variable || [];
 }
 
+export async function listTemplates(workspacePath: string): Promise<GtmTemplate[]> {
+	const result = await gtmFetch<{ template: GtmTemplate[] }>(`/${workspacePath}/templates`);
+	return result.template || [];
+}
+
 export async function updateTag(tagPath: string, tag: Partial<GtmTag>): Promise<GtmTag> {
 	return gtmFetch<GtmTag>(`/${tagPath}`, {
 		method: 'PUT',
@@ -102,6 +115,13 @@ export async function updateVariable(variablePath: string, variable: Partial<Gtm
 	return gtmFetch<GtmVariable>(`/${variablePath}`, {
 		method: 'PUT',
 		body: JSON.stringify(variable),
+	});
+}
+
+export async function updateTemplate(templatePath: string, template: Partial<GtmTemplate>): Promise<GtmTemplate> {
+	return gtmFetch<GtmTemplate>(`/${templatePath}`, {
+		method: 'PUT',
+		body: JSON.stringify(template),
 	});
 }
 
@@ -193,4 +213,88 @@ export function updateCode(item: GtmTag | GtmVariable, newCode: string): GtmTag 
 	}
 
 	return updated;
+}
+
+// Template section interface
+export interface TemplateSection {
+	name: string;       // Section name without underscores (e.g., "INFO", "SANDBOXED_JS_FOR_WEB_TEMPLATE")
+	marker: string;     // Full marker (e.g., "___INFO___")
+	content: string;    // Section content
+	extension: string;  // File extension for this section
+}
+
+// Map section names to file extensions
+function getSectionExtension(sectionName: string): string {
+	if (sectionName.includes('SANDBOXED_JS')) {
+		return '.js';
+	}
+	if (sectionName === 'INFO' || sectionName === 'TEMPLATE_PARAMETERS' ||
+		sectionName.includes('PERMISSIONS')) {
+		return '.json';
+	}
+	if (sectionName === 'TESTS') {
+		return '.json';
+	}
+	return '.txt';
+}
+
+// Parse a GTM template into its sections
+export function parseTemplateSections(templateData: string): TemplateSection[] {
+	const sections: TemplateSection[] = [];
+	const sectionRegex = /___([A-Z_]+)___/g;
+	const matches: Array<{ name: string; marker: string; index: number }> = [];
+
+	let match;
+	while ((match = sectionRegex.exec(templateData)) !== null) {
+		matches.push({
+			name: match[1],
+			marker: match[0],
+			index: match.index,
+		});
+	}
+
+	for (let i = 0; i < matches.length; i++) {
+		const current = matches[i];
+		const contentStart = current.index + current.marker.length;
+		const contentEnd = i < matches.length - 1 ? matches[i + 1].index : templateData.length;
+		const content = templateData.substring(contentStart, contentEnd).trim();
+
+		sections.push({
+			name: current.name,
+			marker: current.marker,
+			content,
+			extension: getSectionExtension(current.name),
+		});
+	}
+
+	return sections;
+}
+
+// Rebuild template from sections
+export function rebuildTemplate(sections: TemplateSection[]): string {
+	return sections.map(s => s.marker + '\n' + s.content + '\n').join('\n');
+}
+
+// Update a specific section in the template
+export function updateTemplateSection(templateData: string, sectionName: string, newContent: string): string {
+	const sections = parseTemplateSections(templateData);
+	const sectionIndex = sections.findIndex(s => s.name === sectionName);
+
+	if (sectionIndex === -1) {
+		return templateData;
+	}
+
+	sections[sectionIndex].content = newContent;
+	return rebuildTemplate(sections);
+}
+
+// Get the template type based on the JS section marker
+export function getTemplateType(templateData: string): 'web' | 'server' | 'unknown' {
+	if (templateData.includes('___SANDBOXED_JS_FOR_WEB_TEMPLATE___')) {
+		return 'web';
+	}
+	if (templateData.includes('___SANDBOXED_JS_FOR_SERVER___')) {
+		return 'server';
+	}
+	return 'unknown';
 }

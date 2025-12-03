@@ -2,14 +2,19 @@ import * as vscode from 'vscode';
 import {
 	GtmTag,
 	GtmVariable,
+	GtmTemplate,
 	listTags,
 	listVariables,
+	listTemplates,
 	updateTag,
 	updateVariable,
+	updateTemplate,
 	deleteTag,
 	deleteVariable,
 	extractCode,
 	updateCode,
+	parseTemplateSections,
+	updateTemplateSection,
 } from './gtmClient';
 
 interface FileEntry {
@@ -18,8 +23,9 @@ interface FileEntry {
 	data: Uint8Array;
 	ctime: number;
 	mtime: number;
-	gtmItem: GtmTag | GtmVariable;
-	itemType: 'tag' | 'variable';
+	gtmItem: GtmTag | GtmVariable | GtmTemplate;
+	itemType: 'tag' | 'variable' | 'template-section';
+	sectionName?: string; // For template sections, the section name (e.g., "SANDBOXED_JS_FOR_WEB_TEMPLATE")
 }
 
 interface DirectoryEntry {
@@ -43,12 +49,13 @@ export interface ContainerInfo {
 export interface ModifiedFile {
 	uri: vscode.Uri;
 	containerName: string;
-	folder: 'tags' | 'variables';
+	folder: 'tags' | 'variables' | 'templates';
 	fileName: string;
-	itemType: 'tag' | 'variable';
-	gtmItem: GtmTag | GtmVariable;
+	itemType: 'tag' | 'variable' | 'template-section';
+	gtmItem: GtmTag | GtmVariable | GtmTemplate;
 	newCode: string;
 	newName?: string; // If renamed, the new name
+	sectionName?: string; // For template sections
 }
 
 export class GtmFileSystemProvider implements vscode.FileSystemProvider {
@@ -62,6 +69,17 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 
 	private _onDidChangeModified = new vscode.EventEmitter<void>();
 	readonly onDidChangeModified: vscode.Event<void> = this._onDidChangeModified.event;
+
+	// Extract code from any GTM item type (for template sections, this is called with the section content already)
+	private extractItemCode(item: GtmTag | GtmVariable | GtmTemplate, itemType: 'tag' | 'variable' | 'template-section', sectionName?: string): string {
+		if (itemType === 'template-section' && sectionName) {
+			// For template sections, find and return the section content
+			const sections = parseTemplateSections((item as GtmTemplate).templateData || '');
+			const section = sections.find(s => s.name === sectionName);
+			return section?.content || '';
+		}
+		return extractCode(item as GtmTag | GtmVariable);
+	}
 
 	constructor() {
 		this.root = {
@@ -105,13 +123,22 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 			entries: new Map(),
 		};
 
-		// Fetch tags and variables
-		const [tags, variables] = await Promise.all([
+		const templatesDir: DirectoryEntry = {
+			type: 'directory',
+			name: 'templates',
+			ctime: Date.now(),
+			mtime: Date.now(),
+			entries: new Map(),
+		};
+
+		// Fetch tags, variables, and templates
+		const [tags, variables, templates] = await Promise.all([
 			listTags(workspacePath),
 			listVariables(workspacePath),
+			listTemplates(workspacePath),
 		]);
 
-		console.log(`Found ${tags.length} tags and ${variables.length} variables for ${containerName}`);
+		console.log(`Found ${tags.length} tags, ${variables.length} variables, and ${templates.length} templates for ${containerName}`);
 
 		// Add tags as files
 		for (const tag of tags) {
@@ -154,14 +181,48 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 			}
 		}
 
+		// Add templates as folders, each containing section files
+		for (const template of templates) {
+			const sections = parseTemplateSections(template.templateData || '');
+			if (sections.length > 0) {
+				const templateDirName = this.sanitizeFileName(template.name);
+				const templateDir: DirectoryEntry = {
+					type: 'directory',
+					name: templateDirName,
+					ctime: Date.now(),
+					mtime: Date.now(),
+					entries: new Map(),
+				};
+
+				// Add each section as a file
+				for (const section of sections) {
+					const sectionFileName = section.name + section.extension;
+					const sectionEntry: FileEntry = {
+						type: 'file',
+						name: sectionFileName,
+						data: new TextEncoder().encode(section.content),
+						ctime: Date.now(),
+						mtime: Date.now(),
+						gtmItem: template,
+						itemType: 'template-section',
+						sectionName: section.name,
+					};
+					templateDir.entries.set(sectionFileName, sectionEntry);
+				}
+
+				templatesDir.entries.set(templateDirName, templateDir);
+			}
+		}
+
 		containerDir.entries.set('tags', tagsDir);
 		containerDir.entries.set('variables', variablesDir);
+		containerDir.entries.set('templates', templatesDir);
 
 		// Add container to root
 		this.root.entries.set(containerKey, containerDir);
 		this.containers.set(containerKey, { name: containerName, publicId, workspacePath, workspaceName, key: containerKey });
 
-		console.log(`Loaded ${tagsDir.entries.size} tags and ${variablesDir.entries.size} variables for ${containerKey}`);
+		console.log(`Loaded ${tagsDir.entries.size} tags, ${variablesDir.entries.size} variables, and ${templatesDir.entries.size} templates for ${containerKey}`);
 
 		// Fire change events
 		this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri: vscode.Uri.parse('gtmsense:/') }]);
@@ -311,7 +372,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 	async writeFile(uri: vscode.Uri, content: Uint8Array): Promise<void> {
 		const entry = this.lookupAsFile(uri);
 		const newCode = new TextDecoder().decode(content);
-		const originalCode = extractCode(entry.gtmItem);
+		const originalCode = this.extractItemCode(entry.gtmItem, entry.itemType, entry.sectionName);
 
 		// Update local cache
 		entry.data = content;
@@ -320,7 +381,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		// Track as modified (or remove if reverted to original)
 		const parts = uri.path.split('/').filter(p => p);
 		const containerName = decodeURIComponent(parts[0]);
-		const folder = parts[1] as 'tags' | 'variables';
+		const folder = parts[1] as 'tags' | 'variables' | 'templates';
 
 		// Check if there's an existing modification (e.g., a rename)
 		const existingModified = this.modifiedFiles.get(uri.toString());
@@ -336,6 +397,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 				gtmItem: entry.gtmItem,
 				newCode,
 				newName: existingModified?.newName, // Preserve any existing name change
+				sectionName: entry.sectionName, // For template sections
 			});
 		} else {
 			this.modifiedFiles.delete(uri.toString());
@@ -422,16 +484,64 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		let failed = 0;
 		const errors: Array<{ fileName: string; error: string }> = [];
 
-		for (const modified of this.modifiedFiles.values()) {
-			// Start with current gtmItem and apply changes
-			let updatedItem = updateCode(modified.gtmItem, modified.newCode);
+		// Group template section changes by template path
+		const templateChanges = new Map<string, { template: GtmTemplate; sections: Map<string, string> }>();
 
-			// If renamed, update the name
-			if (modified.newName) {
-				updatedItem = { ...updatedItem, name: modified.newName };
+		for (const modified of this.modifiedFiles.values()) {
+			if (modified.itemType === 'template-section' && modified.sectionName) {
+				const templatePath = modified.gtmItem.path;
+				if (!templateChanges.has(templatePath)) {
+					templateChanges.set(templatePath, {
+						template: modified.gtmItem as GtmTemplate,
+						sections: new Map(),
+					});
+				}
+				templateChanges.get(templatePath)!.sections.set(modified.sectionName, modified.newCode);
+			}
+		}
+
+		// Push template changes (grouped by template)
+		for (const [templatePath, { template, sections }] of templateChanges) {
+			try {
+				let updatedTemplateData = template.templateData;
+				for (const [sectionName, newContent] of sections) {
+					updatedTemplateData = updateTemplateSection(updatedTemplateData, sectionName, newContent);
+				}
+				const updatedTemplate: Partial<GtmTemplate> = {
+					...template,
+					templateData: updatedTemplateData,
+				};
+				const pushedItem = await updateTemplate(templatePath, updatedTemplate);
+
+				// Update all section entries with the new template data
+				for (const mod of this.modifiedFiles.values()) {
+					if (mod.itemType === 'template-section' && mod.gtmItem.path === templatePath) {
+						const entry = this.lookupAsFile(mod.uri);
+						entry.gtmItem = pushedItem;
+					}
+				}
+				success++;
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				console.error(`Failed to push template ${template.name}: ${errorMessage}`);
+				errors.push({ fileName: template.name, error: errorMessage });
+				failed++;
+			}
+		}
+
+		// Push tag and variable changes
+		for (const modified of this.modifiedFiles.values()) {
+			if (modified.itemType === 'template-section') {
+				continue; // Already handled above
 			}
 
 			try {
+				// Tags and variables use parameter-based code storage
+				let updatedItem = updateCode(modified.gtmItem as GtmTag | GtmVariable, modified.newCode);
+				if (modified.newName) {
+					updatedItem = { ...updatedItem, name: modified.newName };
+				}
+
 				let pushedItem: GtmTag | GtmVariable;
 				if (modified.itemType === 'tag') {
 					pushedItem = await updateTag(modified.gtmItem.path, updatedItem as GtmTag);
@@ -467,7 +577,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 			if (modified) {
 				// Restore original content and name
 				const entry = this.lookupAsFile(uri);
-				const originalCode = extractCode(entry.gtmItem);
+				const originalCode = this.extractItemCode(entry.gtmItem, entry.itemType, entry.sectionName);
 				entry.data = new TextEncoder().encode(originalCode);
 				entry.mtime = Date.now();
 
@@ -483,7 +593,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 			// Discard all changes
 			for (const modified of this.modifiedFiles.values()) {
 				const entry = this.lookupAsFile(modified.uri);
-				const originalCode = extractCode(entry.gtmItem);
+				const originalCode = this.extractItemCode(entry.gtmItem, entry.itemType, entry.sectionName);
 				entry.data = new TextEncoder().encode(originalCode);
 				entry.mtime = Date.now();
 

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { GtmFileSystemProvider } from './fileSystemProvider';
 
-type TreeItemType = 'container' | 'workspace' | 'folder' | 'file';
+type TreeItemType = 'container' | 'workspace' | 'folder' | 'template' | 'file';
 
 export class GtmTreeItem extends vscode.TreeItem {
 	constructor(
@@ -13,7 +13,8 @@ export class GtmTreeItem extends vscode.TreeItem {
 		public readonly uri?: vscode.Uri,
 		public readonly publicId?: string,
 		public readonly isModified?: boolean,
-		public readonly workspaceName?: string
+		public readonly workspaceName?: string,
+		public readonly templateName?: string // For template section files
 	) {
 		super(label, collapsibleState);
 
@@ -33,7 +34,12 @@ export class GtmTreeItem extends vscode.TreeItem {
 				this.iconPath = new vscode.ThemeIcon('git-branch');
 				break;
 			case 'folder':
-				this.iconPath = new vscode.ThemeIcon(folderName === 'tags' ? 'tag' : 'symbol-variable');
+				this.iconPath = new vscode.ThemeIcon(
+					folderName === 'tags' ? 'tag' : folderName === 'variables' ? 'symbol-variable' : 'extensions'
+				);
+				break;
+			case 'template':
+				this.iconPath = new vscode.ThemeIcon('symbol-class');
 				break;
 			case 'file':
 				this.iconPath = new vscode.ThemeIcon('file-code');
@@ -103,36 +109,88 @@ export class GtmSidebarProvider implements vscode.TreeDataProvider<GtmTreeItem> 
 		}
 
 		if (element.itemType === 'workspace') {
-			// Show tags and variables folders under workspace
+			// Show tags, variables, and templates folders under workspace
 			return [
 				new GtmTreeItem('tags', 'folder', vscode.TreeItemCollapsibleState.Collapsed, element.containerName, 'tags'),
-				new GtmTreeItem('variables', 'folder', vscode.TreeItemCollapsibleState.Collapsed, element.containerName, 'variables')
+				new GtmTreeItem('variables', 'folder', vscode.TreeItemCollapsibleState.Collapsed, element.containerName, 'variables'),
+				new GtmTreeItem('templates', 'folder', vscode.TreeItemCollapsibleState.Collapsed, element.containerName, 'templates')
 			];
 		}
 
 		if (element.itemType === 'folder' && element.containerName && element.folderName) {
-			// Show files in folder
+			// Show files in folder (or template directories for templates folder)
 			const uri = vscode.Uri.parse(`gtmsense:/${element.containerName}/${element.folderName}`);
+			try {
+				const entries = this.fsProvider.readDirectory(uri);
+
+				if (element.folderName === 'templates') {
+					// Templates folder contains template directories
+					return entries
+						.filter(([, type]) => type === vscode.FileType.Directory)
+						.map(([name]) => new GtmTreeItem(
+							name,
+							'template',
+							vscode.TreeItemCollapsibleState.Collapsed,
+							element.containerName,
+							'templates',
+							undefined,
+							undefined,
+							undefined,
+							undefined,
+							name // templateName
+						));
+				} else {
+					// Tags/variables folders contain files
+					return entries
+						.filter(([, type]) => type === vscode.FileType.File)
+						.map(([name]) => {
+							const fileUri = vscode.Uri.parse(`gtmsense:/${element.containerName}/${element.folderName}/${name}`);
+							const isModified = this.fsProvider.isModified(fileUri);
+							return new GtmTreeItem(
+								name.replace(/\.js$/, ''), // Remove .js extension for display
+								'file',
+								vscode.TreeItemCollapsibleState.None,
+								element.containerName,
+								element.folderName,
+								fileUri,
+								undefined,
+								isModified
+							);
+						});
+				}
+			} catch (error) {
+				console.error('Failed to read directory:', uri.toString(), error);
+				return [];
+			}
+		}
+
+		if (element.itemType === 'template' && element.containerName && element.templateName) {
+			// Show section files inside a template
+			const uri = vscode.Uri.parse(`gtmsense:/${element.containerName}/templates/${element.templateName}`);
 			try {
 				const entries = this.fsProvider.readDirectory(uri);
 				return entries
 					.filter(([, type]) => type === vscode.FileType.File)
 					.map(([name]) => {
-						const fileUri = vscode.Uri.parse(`gtmsense:/${element.containerName}/${element.folderName}/${name}`);
+						const fileUri = vscode.Uri.parse(`gtmsense:/${element.containerName}/templates/${element.templateName}/${name}`);
 						const isModified = this.fsProvider.isModified(fileUri);
+						// Remove extension for display
+						const displayName = name.replace(/\.(js|json|txt)$/, '');
 						return new GtmTreeItem(
-							name.replace(/\.js$/, ''), // Remove .js extension for display
+							displayName,
 							'file',
 							vscode.TreeItemCollapsibleState.None,
 							element.containerName,
-							element.folderName,
+							'templates',
 							fileUri,
 							undefined,
-							isModified
+							isModified,
+							undefined,
+							element.templateName
 						);
 					});
 			} catch (error) {
-				console.error('Failed to read directory:', uri.toString(), error);
+				console.error('Failed to read template directory:', uri.toString(), error);
 				return [];
 			}
 		}
