@@ -13,6 +13,32 @@ let sidebarProvider: GtmSidebarProvider;
 let diagnosticsProvider: GtmDiagnosticsProvider;
 export let outputChannel: vscode.LogOutputChannel;
 
+// Cache for accounts and containers
+const cache = {
+	accounts: null as Awaited<ReturnType<typeof listAccounts>> | null,
+	containers: new Map<string, Awaited<ReturnType<typeof listContainers>>>(),
+};
+
+async function getCachedAccounts(forceRefresh = false) {
+	if (forceRefresh || !cache.accounts) {
+		outputChannel.info(forceRefresh ? 'Refreshing accounts from API...' : 'Fetching accounts from API...');
+		cache.accounts = await listAccounts();
+	} else {
+		outputChannel.info('Using cached accounts');
+	}
+	return cache.accounts;
+}
+
+async function getCachedContainers(accountPath: string, forceRefresh = false) {
+	if (forceRefresh || !cache.containers.has(accountPath)) {
+		outputChannel.info(forceRefresh ? 'Refreshing containers from API...' : 'Fetching containers from API...');
+		cache.containers.set(accountPath, await listContainers(accountPath));
+	} else {
+		outputChannel.info('Using cached containers');
+	}
+	return cache.containers.get(accountPath)!;
+}
+
 export async function activate(context: vscode.ExtensionContext) {
 	outputChannel = vscode.window.createOutputChannel('GTMSense', { log: true });
 	const version = context.extension.packageJSON.version;
@@ -121,37 +147,74 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Command to load a container
 	const loadContainerCommand = vscode.commands.registerCommand('gtmsense.loadContainer', async () => {
 		try {
-			// Step 1: Select account
-			const accounts = await listAccounts();
-			outputChannel.info(`SUCCESS: Fetched Accounts List`, accounts);
-			
+			let accounts = await getCachedAccounts();
+			outputChannel.info(`Fetched ${accounts.length} accounts`);
+
 			if (accounts.length === 0) {
 				vscode.window.showErrorMessage('No GTM accounts found');
 				return;
 			}
 
-			const accountPick = await vscode.window.showQuickPick(
-				accounts.map(a => ({ label: a.name, path: a.path })),
-				{ placeHolder: 'Select GTM Account' }
-			);
-			if (!accountPick) {
-				return;
-			}
+			// Outer loop to allow going back from containers to accounts
+			selectAccount: while (true) {
+				// Step 1: Select account
+				let accountPick: { label: string; path: string; isRefresh: boolean } | undefined;
+				while (true) {
+					accountPick = await vscode.window.showQuickPick(
+						[
+							...accounts.map(a => ({ label: a.name, path: a.path, isRefresh: false })),
+							{ label: '$(refresh) Refresh Accounts', path: '', isRefresh: true }
+						],
+						{ placeHolder: 'Select GTM Account' }
+					);
 
-			// Step 2: Select container
-			const containers = await listContainers(accountPick.path);
-			if (containers.length === 0) {
-				vscode.window.showErrorMessage('No containers found');
-				return;
-			}
+					if (!accountPick) {
+						return;
+					}
 
-			const containerPick = await vscode.window.showQuickPick(
-				containers.map(c => ({ label: c.name, description: c.publicId, path: c.path, publicId: c.publicId })),
-				{ placeHolder: 'Select Container' }
-			);
-			if (!containerPick) {
-				return;
-			}
+					if (accountPick.isRefresh) {
+						accounts = await getCachedAccounts(true);
+						outputChannel.info(`Refreshed ${accounts.length} accounts`);
+						continue;
+					}
+
+					break;
+				}
+
+				// Step 2: Select container
+				let containers = await getCachedContainers(accountPick.path);
+				if (containers.length === 0) {
+					vscode.window.showErrorMessage('No containers found');
+					return;
+				}
+
+				let containerPick: { label: string; description: string; path: string; publicId: string; isRefresh: boolean; isBack: boolean } | undefined;
+				while (true) {
+					containerPick = await vscode.window.showQuickPick(
+						[
+							{ label: '$(arrow-left) ..', description: 'Back to Accounts', path: '', publicId: '', isRefresh: false, isBack: true },
+							...containers.map(c => ({ label: c.name, description: c.publicId, path: c.path, publicId: c.publicId, isRefresh: false, isBack: false })),
+							{ label: '$(refresh) Refresh Containers', description: '', path: '', publicId: '', isRefresh: true, isBack: false }
+						],
+						{ placeHolder: `Select Container (${accountPick.label})` }
+					);
+
+					if (!containerPick) {
+						return;
+					}
+
+					if (containerPick.isBack) {
+						continue selectAccount;
+					}
+
+					if (containerPick.isRefresh) {
+						containers = await getCachedContainers(accountPick.path, true);
+						outputChannel.info(`Refreshed ${containers.length} containers`);
+						continue;
+					}
+
+					break;
+				}
 
 			// Step 3: Select or create workspace
 			const workspaces = await listWorkspaces(containerPick.path);
@@ -198,6 +261,10 @@ export async function activate(context: vscode.ExtensionContext) {
 			sidebarProvider.refresh();
 
 			vscode.window.showInformationMessage(`Loaded container: ${containerPick.label}`);
+
+			// Break out of selectAccount loop after successful load
+			break;
+			}
 		} catch (error) {
 			
 			vscode.window.showErrorMessage(`Failed to load container: ${error}`);
