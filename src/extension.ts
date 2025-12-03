@@ -11,8 +11,11 @@ import { listAccounts, listContainers, listWorkspaces, createWorkspace, createTa
 let fsProvider: GtmFileSystemProvider;
 let sidebarProvider: GtmSidebarProvider;
 let diagnosticsProvider: GtmDiagnosticsProvider;
+export let outputChannel: vscode.OutputChannel;
 
 export async function activate(context: vscode.ExtensionContext) {
+	outputChannel = vscode.window.createOutputChannel('GTMSense');
+	outputChannel.appendLine('GTMSense is now active!');
 	console.log('GTMSense is now active!');
 
 	// Close any previously opened gtmsense:// files since they won't work after restart
