@@ -131,7 +131,8 @@ export class GtmSidebarProvider implements vscode.TreeDataProvider<GtmTreeItem> 
 							isModified
 						);
 					});
-			} catch {
+			} catch (error) {
+				console.error('Failed to read directory:', uri.toString(), error);
 				return [];
 			}
 		}

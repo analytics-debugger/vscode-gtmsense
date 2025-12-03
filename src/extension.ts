@@ -230,12 +230,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// Command to create a new tag
 	const createTagCommand = vscode.commands.registerCommand('gtmsense.createTag', async (item?: { containerName?: string }) => {
-		const containerName = item?.containerName || await pickContainer(fsProvider);
-		if (!containerName) {
+		const containerKey = item?.containerName || await pickContainer(fsProvider);
+		if (!containerKey) {
 			return;
 		}
 
-		const container = fsProvider.getContainers().find(c => c.name === containerName);
+		const container = fsProvider.getContainers().find(c => c.key === containerKey);
 		if (!container) {
 			vscode.window.showErrorMessage('Container not found');
 			return;
@@ -252,11 +252,11 @@ export async function activate(context: vscode.ExtensionContext) {
 		try {
 			const defaultCode = '<script>\n  // Your code here\n</script>';
 			const tag = await createTag(container.workspacePath, tagName, defaultCode);
-			await fsProvider.addFileEntry(containerName, 'tags', tag, 'tag');
+			await fsProvider.addFileEntry(container.key, 'tags', tag, 'tag');
 			sidebarProvider.refresh();
 
 			// Open the new file
-			const uri = vscode.Uri.parse(`gtmsense:/${containerName}/tags/${fsProvider.sanitizeFileName(tagName)}.js`);
+			const uri = vscode.Uri.parse(`gtmsense:/${container.key}/tags/${fsProvider.sanitizeFileName(tagName)}.js`);
 			await vscode.window.showTextDocument(uri);
 
 			vscode.window.showInformationMessage(`Created tag: ${tagName}`);
@@ -267,12 +267,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// Command to create a new variable
 	const createVariableCommand = vscode.commands.registerCommand('gtmsense.createVariable', async (item?: { containerName?: string }) => {
-		const containerName = item?.containerName || await pickContainer(fsProvider);
-		if (!containerName) {
+		const containerKey = item?.containerName || await pickContainer(fsProvider);
+		if (!containerKey) {
 			return;
 		}
 
-		const container = fsProvider.getContainers().find(c => c.name === containerName);
+		const container = fsProvider.getContainers().find(c => c.key === containerKey);
 		if (!container) {
 			vscode.window.showErrorMessage('Container not found');
 			return;
@@ -289,11 +289,11 @@ export async function activate(context: vscode.ExtensionContext) {
 		try {
 			const defaultCode = 'function() {\n  return undefined;\n}';
 			const variable = await createVariable(container.workspacePath, varName, defaultCode);
-			await fsProvider.addFileEntry(containerName, 'variables', variable, 'variable');
+			await fsProvider.addFileEntry(container.key, 'variables', variable, 'variable');
 			sidebarProvider.refresh();
 
 			// Open the new file
-			const uri = vscode.Uri.parse(`gtmsense:/${containerName}/variables/${fsProvider.sanitizeFileName(varName)}.js`);
+			const uri = vscode.Uri.parse(`gtmsense:/${container.key}/variables/${fsProvider.sanitizeFileName(varName)}.js`);
 			await vscode.window.showTextDocument(uri);
 
 			vscode.window.showInformationMessage(`Created variable: ${varName}`);
@@ -422,6 +422,56 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage(`Discarded changes to ${itemName}`);
 	});
 
+	// Command to rename a tag or variable
+	const renameItemCommand = vscode.commands.registerCommand('gtmsense.renameItem', async (item?: { uri?: vscode.Uri }) => {
+		if (!item?.uri) {
+			vscode.window.showErrorMessage('No item selected');
+			return;
+		}
+
+		const fileEntry = fsProvider.getFileEntry(item.uri);
+		if (!fileEntry) {
+			vscode.window.showErrorMessage('File not found');
+			return;
+		}
+
+		const itemType = fileEntry.itemType === 'tag' ? 'tag' : 'variable';
+		const currentName = fileEntry.gtmItem.name;
+
+		const newName = await vscode.window.showInputBox({
+			prompt: `Enter new name for ${itemType}`,
+			value: currentName,
+			validateInput: (value) => {
+				if (!value || value.trim().length === 0) {
+					return 'Name cannot be empty';
+				}
+				if (value === currentName) {
+					return 'Name must be different from current name';
+				}
+				return undefined;
+			}
+		});
+
+		if (!newName) {
+			return;
+		}
+
+		try {
+			const newUri = fsProvider.renameFile(item.uri, newName);
+			sidebarProvider.refresh();
+
+			// If the file was open, open the new file
+			const activeEditor = vscode.window.activeTextEditor;
+			if (activeEditor && activeEditor.document.uri.toString() === item.uri.toString()) {
+				await vscode.window.showTextDocument(newUri);
+			}
+
+			vscode.window.showInformationMessage(`Renamed ${itemType}: ${currentName} → ${newName} (pending push)`);
+		} catch (error) {
+			vscode.window.showErrorMessage(`Failed to rename ${itemType}: ${error}`);
+		}
+	});
+
 	// Command to sign out
 	const signOutCommand = vscode.commands.registerCommand('gtmsense.signOut', async () => {
 		// Check for pending changes
@@ -485,7 +535,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	context.subscriptions.push(loadContainerCommand, unloadContainerCommand, createTagCommand, createVariableCommand, pushChangesCommand, discardChangesCommand, deleteItemCommand, discardItemChangesCommand, signOutCommand);
+	context.subscriptions.push(loadContainerCommand, unloadContainerCommand, createTagCommand, createVariableCommand, pushChangesCommand, discardChangesCommand, deleteItemCommand, discardItemChangesCommand, renameItemCommand, signOutCommand);
 }
 
 async function pickContainer(fsProvider: GtmFileSystemProvider): Promise<string | undefined> {
@@ -495,13 +545,13 @@ async function pickContainer(fsProvider: GtmFileSystemProvider): Promise<string 
 		return undefined;
 	}
 	if (containers.length === 1) {
-		return containers[0].name;
+		return containers[0].key;
 	}
 	const pick = await vscode.window.showQuickPick(
-		containers.map(c => ({ label: c.name, description: c.publicId })),
+		containers.map(c => ({ label: c.name, description: `${c.workspaceName} (${c.publicId})`, key: c.key })),
 		{ placeHolder: 'Select container' }
 	);
-	return pick?.label;
+	return pick?.key;
 }
 
 export function deactivate() {}

@@ -59,6 +59,11 @@
         "icon": "$(trash)"
       },
       {
+        "command": "gtmsense.renameItem",
+        "title": "GTM-SENSE: Rename",
+        "icon": "$(edit)"
+      },
+      {
         "command": "gtmsense.discardItemChanges",
         "title": "GTM-SENSE: Discard Changes",
         "icon": "$(discard)"
@@ -147,13 +152,18 @@
         },
         {
           "command": "gtmsense.createTag",
-          "when": "view == gtmContainers && viewItem == container",
+          "when": "view == gtmContainers && viewItem == workspace",
           "group": "1_create"
         },
         {
           "command": "gtmsense.createVariable",
-          "when": "view == gtmContainers && viewItem == container",
+          "when": "view == gtmContainers && viewItem == workspace",
           "group": "1_create"
+        },
+        {
+          "command": "gtmsense.renameItem",
+          "when": "view == gtmContainers && viewItem =~ /^file/",
+          "group": "1_edit"
         },
         {
           "command": "gtmsense.deleteItem",
