@@ -417,9 +417,10 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		return this.modifiedFiles.size > 0;
 	}
 
-	async pushChanges(): Promise<{ success: number; failed: number }> {
+	async pushChanges(): Promise<{ success: number; failed: number; errors: Array<{ fileName: string; error: string }> }> {
 		let success = 0;
 		let failed = 0;
+		const errors: Array<{ fileName: string; error: string }> = [];
 
 		for (const modified of this.modifiedFiles.values()) {
 			// Start with current gtmItem and apply changes
@@ -444,7 +445,9 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 
 				success++;
 			} catch (error) {
-				console.error(`Failed to push ${modified.fileName}: ${error}`);
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				console.error(`Failed to push ${modified.fileName}: ${errorMessage}`);
+				errors.push({ fileName: modified.fileName, error: errorMessage });
 				failed++;
 			}
 		}
@@ -455,7 +458,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 			this._onDidChangeModified.fire();
 		}
 
-		return { success, failed };
+		return { success, failed, errors };
 	}
 
 	discardChanges(uri?: vscode.Uri): void {

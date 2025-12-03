@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.0.3] - 2025-12-03
+
+### Added
+
+- **Caching for API calls**: Accounts, containers, and workspaces are now cached for faster navigation
+- **Refresh option**: Added refresh buttons to reload accounts, containers, and workspaces from the API
+- **Navigation**: Added "back" navigation (`..`) to go from containers to accounts, and from workspaces to containers
+- **Output channel**: Added GTMSense output channel for logging and debugging
+- **Version info**: Output channel shows extension and VSCode version on activation
+- **Improved error reporting**: Push failures now show detailed errors in the output channeltt
+
+### Changed
+
+- Container/workspace selection now shows current context in placeholder (e.g., "Select Container (Account Name)")
+- GitHub Actions workflow now supports creating releases from manual dispatch
+
 ## [0.0.2] - 2025-12-03
 
 ### Added
@@ -37,5 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Google OAuth authentication
 - Multiple container/workspace support
 
-[0.0.2]: https://github.com/analytics-debugger/vscode-gtmsense/compare/archive/v0.0.1...v0.0.2
-[0.0.1]: https://github.com/analytics-debugger/vscode-gtmsense/releases/tag/archive/v0.0.1
+[0.0.3]: https://github.com/analytics-debugger/vscode-gtmsense/compare/v0.0.2...v0.0.3
+[0.0.2]: https://github.com/analytics-debugger/vscode-gtmsense/compare/v0.0.1...v0.0.2
+[0.0.1]: https://github.com/analytics-debugger/vscode-gtmsense/releases/tag/v0.0.1
