@@ -48,6 +48,7 @@ export interface ModifiedFile {
 	itemType: 'tag' | 'variable';
 	gtmItem: GtmTag | GtmVariable;
 	newCode: string;
+	newName?: string; // If renamed, the new name
 }
 
 export class GtmFileSystemProvider implements vscode.FileSystemProvider {
@@ -198,7 +199,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 
 	getContainerFromUri(uri: vscode.Uri): string | undefined {
 		const parts = uri.path.split('/').filter(p => p);
-		return parts.length > 0 ? parts[0] : undefined;
+		return parts.length > 0 ? decodeURIComponent(parts[0]) : undefined;
 	}
 
 	sanitizeFileName(name: string): string {
@@ -240,7 +241,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 	}
 
 	private lookup(uri: vscode.Uri): Entry | undefined {
-		const parts = uri.path.split('/').filter(p => p);
+		const parts = uri.path.split('/').filter(p => p).map(p => decodeURIComponent(p));
 		let entry: Entry = this.root;
 
 		for (const part of parts) {
@@ -318,10 +319,14 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 
 		// Track as modified (or remove if reverted to original)
 		const parts = uri.path.split('/').filter(p => p);
-		const containerName = parts[0];
+		const containerName = decodeURIComponent(parts[0]);
 		const folder = parts[1] as 'tags' | 'variables';
 
-		if (newCode !== originalCode) {
+		// Check if there's an existing modification (e.g., a rename)
+		const existingModified = this.modifiedFiles.get(uri.toString());
+		const hasNameChange = existingModified?.newName !== undefined;
+
+		if (newCode !== originalCode || hasNameChange) {
 			this.modifiedFiles.set(uri.toString(), {
 				uri,
 				containerName,
@@ -330,6 +335,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 				itemType: entry.itemType,
 				gtmItem: entry.gtmItem,
 				newCode,
+				newName: existingModified?.newName, // Preserve any existing name change
 			});
 		} else {
 			this.modifiedFiles.delete(uri.toString());
@@ -354,7 +360,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 	async deleteFile(uri: vscode.Uri): Promise<void> {
 		const entry = this.lookupAsFile(uri);
 		const parts = uri.path.split('/').filter(p => p);
-		const containerName = parts[0];
+		const containerName = decodeURIComponent(parts[0]);
 		const folder = parts[1] as 'tags' | 'variables';
 
 		// Delete from GTM
@@ -416,18 +422,25 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		let failed = 0;
 
 		for (const modified of this.modifiedFiles.values()) {
-			const updatedItem = updateCode(modified.gtmItem, modified.newCode);
+			// Start with current gtmItem and apply changes
+			let updatedItem = updateCode(modified.gtmItem, modified.newCode);
+
+			// If renamed, update the name
+			if (modified.newName) {
+				updatedItem = { ...updatedItem, name: modified.newName };
+			}
 
 			try {
+				let pushedItem: GtmTag | GtmVariable;
 				if (modified.itemType === 'tag') {
-					await updateTag(modified.gtmItem.path, updatedItem as GtmTag);
+					pushedItem = await updateTag(modified.gtmItem.path, updatedItem as GtmTag);
 				} else {
-					await updateVariable(modified.gtmItem.path, updatedItem as GtmVariable);
+					pushedItem = await updateVariable(modified.gtmItem.path, updatedItem as GtmVariable);
 				}
 
-				// Update the stored gtmItem with the new code
+				// Update the stored gtmItem with the response from GTM
 				const entry = this.lookupAsFile(modified.uri);
-				entry.gtmItem = updateCode(entry.gtmItem, modified.newCode) as GtmTag | GtmVariable;
+				entry.gtmItem = pushedItem;
 
 				success++;
 			} catch (error) {
@@ -449,13 +462,19 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		if (uri) {
 			const modified = this.modifiedFiles.get(uri.toString());
 			if (modified) {
-				// Restore original content
+				// Restore original content and name
 				const entry = this.lookupAsFile(uri);
 				const originalCode = extractCode(entry.gtmItem);
 				entry.data = new TextEncoder().encode(originalCode);
 				entry.mtime = Date.now();
-				this.modifiedFiles.delete(uri.toString());
-				this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+
+				// If it was renamed, restore the original name
+				if (modified.newName) {
+					this.restoreOriginalName(uri, modified);
+				} else {
+					this.modifiedFiles.delete(uri.toString());
+					this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+				}
 			}
 		} else {
 			// Discard all changes
@@ -464,10 +483,147 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 				const originalCode = extractCode(entry.gtmItem);
 				entry.data = new TextEncoder().encode(originalCode);
 				entry.mtime = Date.now();
-				this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri: modified.uri }]);
+
+				// If it was renamed, restore the original name
+				if (modified.newName) {
+					this.restoreOriginalName(modified.uri, modified);
+				} else {
+					this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri: modified.uri }]);
+				}
 			}
 			this.modifiedFiles.clear();
 		}
 		this._onDidChangeModified.fire();
+	}
+
+	private restoreOriginalName(uri: vscode.Uri, modified: ModifiedFile): void {
+		const parts = uri.path.split('/').filter(p => p);
+		const containerName = decodeURIComponent(parts[0]);
+		const folder = parts[1] as 'tags' | 'variables';
+
+		const containerDir = this.root.entries.get(containerName);
+		if (!containerDir || containerDir.type !== 'directory') {
+			return;
+		}
+		const folderDir = containerDir.entries.get(folder);
+		if (!folderDir || folderDir.type !== 'directory') {
+			return;
+		}
+
+		// Get the current entry
+		const entry = folderDir.entries.get(modified.fileName);
+		if (!entry || entry.type !== 'file') {
+			return;
+		}
+
+		// Remove current entry
+		folderDir.entries.delete(modified.fileName);
+
+		// Restore original file name
+		const originalName = modified.gtmItem.name;
+		const originalFileName = this.sanitizeFileName(originalName) + '.js';
+		entry.name = originalFileName;
+		folderDir.entries.set(originalFileName, entry);
+
+		// Update variable names cache if needed
+		if (modified.itemType === 'variable' && modified.newName) {
+			const names = this.variableNames.get(containerName) || [];
+			const idx = names.indexOf(modified.newName);
+			if (idx !== -1) {
+				names[idx] = originalName;
+			}
+			this.variableNames.set(containerName, names);
+		}
+
+		const originalUri = vscode.Uri.parse(`gtmsense:/${containerName}/${folder}/${originalFileName}`);
+
+		// Remove from modified files
+		this.modifiedFiles.delete(uri.toString());
+
+		// Fire change events
+		this._emitter.fire([
+			{ type: vscode.FileChangeType.Deleted, uri },
+			{ type: vscode.FileChangeType.Created, uri: originalUri }
+		]);
+	}
+
+	renameFile(uri: vscode.Uri, newName: string): vscode.Uri {
+		const entry = this.lookupAsFile(uri);
+		const parts = uri.path.split('/').filter(p => p);
+		const containerName = decodeURIComponent(parts[0]);
+		const folder = parts[1] as 'tags' | 'variables';
+
+		console.log(`Renaming file: ${entry.name} -> ${newName} in ${containerName}/${folder}`);
+
+		// Get the directory containing this file
+		const containerDir = this.root.entries.get(containerName);
+		if (!containerDir || containerDir.type !== 'directory') {
+			throw new Error(`Container ${containerName} not found`);
+		}
+		const folderDir = containerDir.entries.get(folder);
+		if (!folderDir || folderDir.type !== 'directory') {
+			throw new Error(`Folder ${folder} not found`);
+		}
+
+		console.log(`Before rename - folder entries: ${Array.from(folderDir.entries.keys()).join(', ')}`);
+
+		// Remove old entry from directory
+		folderDir.entries.delete(entry.name);
+
+		// Check if there's an existing modification for this file
+		const existingModified = this.modifiedFiles.get(uri.toString());
+		const currentCode = new TextDecoder().decode(entry.data);
+
+		// Update variable names cache if it was a variable
+		if (entry.itemType === 'variable') {
+			const names = this.variableNames.get(containerName) || [];
+			const oldName = (entry.gtmItem as GtmVariable).name;
+			const idx = names.indexOf(oldName);
+			if (idx !== -1) {
+				names[idx] = newName;
+			}
+			this.variableNames.set(containerName, names);
+		}
+
+		// Create new file entry with updated display name
+		const newFileName = this.sanitizeFileName(newName) + '.js';
+		const newEntry: FileEntry = {
+			type: 'file',
+			name: newFileName,
+			data: entry.data,
+			ctime: entry.ctime,
+			mtime: Date.now(),
+			gtmItem: entry.gtmItem, // Keep original gtmItem - will be updated on push
+			itemType: entry.itemType,
+		};
+		folderDir.entries.set(newFileName, newEntry);
+
+		console.log(`After rename - folder entries: ${Array.from(folderDir.entries.keys()).join(', ')}`);
+
+		const newUri = vscode.Uri.parse(`gtmsense:/${containerName}/${folder}/${newFileName}`);
+
+		// Remove old modified entry if exists
+		this.modifiedFiles.delete(uri.toString());
+
+		// Track as modified with new name (and preserve any code changes)
+		this.modifiedFiles.set(newUri.toString(), {
+			uri: newUri,
+			containerName,
+			folder,
+			fileName: newFileName,
+			itemType: entry.itemType,
+			gtmItem: entry.gtmItem,
+			newCode: existingModified?.newCode ?? currentCode,
+			newName: newName,
+		});
+
+		// Fire change events
+		this._emitter.fire([
+			{ type: vscode.FileChangeType.Deleted, uri },
+			{ type: vscode.FileChangeType.Created, uri: newUri }
+		]);
+		this._onDidChangeModified.fire();
+
+		return newUri;
 	}
 }
