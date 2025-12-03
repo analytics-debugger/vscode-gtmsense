@@ -13,10 +13,11 @@ let sidebarProvider: GtmSidebarProvider;
 let diagnosticsProvider: GtmDiagnosticsProvider;
 export let outputChannel: vscode.LogOutputChannel;
 
-// Cache for accounts and containers
+// Cache for accounts, containers, and workspaces
 const cache = {
 	accounts: null as Awaited<ReturnType<typeof listAccounts>> | null,
 	containers: new Map<string, Awaited<ReturnType<typeof listContainers>>>(),
+	workspaces: new Map<string, Awaited<ReturnType<typeof listWorkspaces>>>(),
 };
 
 async function getCachedAccounts(forceRefresh = false) {
@@ -37,6 +38,16 @@ async function getCachedContainers(accountPath: string, forceRefresh = false) {
 		outputChannel.info('Using cached containers');
 	}
 	return cache.containers.get(accountPath)!;
+}
+
+async function getCachedWorkspaces(containerPath: string, forceRefresh = false) {
+	if (forceRefresh || !cache.workspaces.has(containerPath)) {
+		outputChannel.info(forceRefresh ? 'Refreshing workspaces from API...' : 'Fetching workspaces from API...');
+		cache.workspaces.set(containerPath, await listWorkspaces(containerPath));
+	} else {
+		outputChannel.info('Using cached workspaces');
+	}
+	return cache.workspaces.get(containerPath)!;
 }
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -188,83 +199,104 @@ export async function activate(context: vscode.ExtensionContext) {
 					return;
 				}
 
-				let containerPick: { label: string; description: string; path: string; publicId: string; isRefresh: boolean; isBack: boolean } | undefined;
-				while (true) {
-					containerPick = await vscode.window.showQuickPick(
-						[
-							{ label: '$(arrow-left) ..', description: 'Back to Accounts', path: '', publicId: '', isRefresh: false, isBack: true },
-							...containers.map(c => ({ label: c.name, description: c.publicId, path: c.path, publicId: c.publicId, isRefresh: false, isBack: false })),
-							{ label: '$(refresh) Refresh Containers', description: '', path: '', publicId: '', isRefresh: true, isBack: false }
-						],
-						{ placeHolder: `Select Container (${accountPick.label})` }
-					);
+				selectContainer: while (true) {
+					let containerPick: { label: string; description: string; path: string; publicId: string; isRefresh: boolean; isBack: boolean } | undefined;
+					while (true) {
+						containerPick = await vscode.window.showQuickPick(
+							[
+								{ label: '$(arrow-left) ..', description: 'Back to Accounts', path: '', publicId: '', isRefresh: false, isBack: true },
+								...containers.map(c => ({ label: c.name, description: c.publicId, path: c.path, publicId: c.publicId, isRefresh: false, isBack: false })),
+								{ label: '$(refresh) Refresh Containers', description: '', path: '', publicId: '', isRefresh: true, isBack: false }
+							],
+							{ placeHolder: `Select Container (${accountPick.label})` }
+						);
 
-					if (!containerPick) {
+						if (!containerPick) {
+							return;
+						}
+
+						if (containerPick.isBack) {
+							continue selectAccount;
+						}
+
+						if (containerPick.isRefresh) {
+							containers = await getCachedContainers(accountPick.path, true);
+							outputChannel.info(`Refreshed ${containers.length} containers`);
+							continue;
+						}
+
+						break;
+					}
+
+					// Step 3: Select or create workspace
+					let workspaces = await getCachedWorkspaces(containerPick.path);
+
+					let workspacePick: { label: string; path: string; isNew: boolean; isRefresh: boolean; isBack: boolean } | undefined;
+					while (true) {
+						workspacePick = await vscode.window.showQuickPick(
+							[
+								{ label: '$(arrow-left) ..', description: 'Back to Containers', path: '', isNew: false, isRefresh: false, isBack: true },
+								{ label: '$(add) Create New Workspace', description: '', path: '', isNew: true, isRefresh: false, isBack: false },
+								...workspaces.map(w => ({ label: w.name, description: '', path: w.path, isNew: false, isRefresh: false, isBack: false })),
+								{ label: '$(refresh) Refresh Workspaces', description: '', path: '', isNew: false, isRefresh: true, isBack: false }
+							],
+							{ placeHolder: `Select Workspace (${containerPick.label})` }
+						);
+
+						if (!workspacePick) {
+							return;
+						}
+
+						if (workspacePick.isBack) {
+							continue selectContainer;
+						}
+
+						if (workspacePick.isRefresh) {
+							workspaces = await getCachedWorkspaces(containerPick.path, true);
+							outputChannel.info(`Refreshed ${workspaces.length} workspaces`);
+							continue;
+						}
+
+						break;
+					}
+
+					let finalWorkspace: { name: string; path: string };
+
+					if (workspacePick.isNew) {
+						const newName = await vscode.window.showInputBox({
+							prompt: 'Enter workspace name',
+							placeHolder: 'My Workspace'
+						});
+						if (!newName) {
+							return;
+						}
+						const created = await createWorkspace(containerPick.path, newName);
+						// Invalidate workspace cache after creating new one
+						cache.workspaces.delete(containerPick.path);
+						finalWorkspace = { name: created.name, path: created.path };
+						vscode.window.showInformationMessage(`Created workspace: ${newName}`);
+					} else {
+						finalWorkspace = { name: workspacePick.label, path: workspacePick.path };
+					}
+
+					// Check if this container + workspace combo is already loaded
+					if (fsProvider.hasContainer(containerPick.label, finalWorkspace.name)) {
+						vscode.window.showWarningMessage(`Container "${containerPick.label}" with workspace "${finalWorkspace.name}" is already loaded`);
 						return;
 					}
 
-					if (containerPick.isBack) {
-						continue selectAccount;
-					}
+					// Add the container
+					await fsProvider.addContainer(containerPick.label, containerPick.publicId, finalWorkspace.path, finalWorkspace.name);
 
-					if (containerPick.isRefresh) {
-						containers = await getCachedContainers(accountPick.path, true);
-						outputChannel.info(`Refreshed ${containers.length} containers`);
-						continue;
-					}
+					// Refresh sidebar
+					sidebarProvider.refresh();
 
+					vscode.window.showInformationMessage(`Loaded container: ${containerPick.label}`);
+
+					// Break out of all loops after successful load
 					break;
-				}
-
-			// Step 3: Select or create workspace
-			const workspaces = await listWorkspaces(containerPick.path);
-			const workspaceItems = [
-				{ label: '$(add) Create New Workspace', path: '', isNew: true },
-				...workspaces.map(w => ({ label: w.name, path: w.path, isNew: false }))
-			];
-
-			const workspacePick = await vscode.window.showQuickPick(
-				workspaceItems,
-				{ placeHolder: 'Select Workspace' }
-			);
-			if (!workspacePick) {
-				return;
-			}
-
-			let finalWorkspace: { name: string; path: string };
-
-			if (workspacePick.isNew) {
-				const newName = await vscode.window.showInputBox({
-					prompt: 'Enter workspace name',
-					placeHolder: 'My Workspace'
-				});
-				if (!newName) {
-					return;
-				}
-				const created = await createWorkspace(containerPick.path, newName);
-				finalWorkspace = { name: created.name, path: created.path };
-				vscode.window.showInformationMessage(`Created workspace: ${newName}`);
-			} else {
-				finalWorkspace = { name: workspacePick.label, path: workspacePick.path };
-			}
-
-			// Check if this container + workspace combo is already loaded
-			if (fsProvider.hasContainer(containerPick.label, finalWorkspace.name)) {
-				vscode.window.showWarningMessage(`Container "${containerPick.label}" with workspace "${finalWorkspace.name}" is already loaded`);
-				return;
-			}
-
-			// Add the container
-			await fsProvider.addContainer(containerPick.label, containerPick.publicId, finalWorkspace.path, finalWorkspace.name);
-
-			// Refresh sidebar
-			sidebarProvider.refresh();
-
-			vscode.window.showInformationMessage(`Loaded container: ${containerPick.label}`);
-
-			// Break out of selectAccount loop after successful load
-			break;
-			}
+				} // end selectContainer loop
+			} // end selectAccount loop
 		} catch (error) {
 			
 			vscode.window.showErrorMessage(`Failed to load container: ${error}`);
