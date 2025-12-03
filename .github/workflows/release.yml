@@ -6,10 +6,11 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version to release (e.g., 0.0.2)'
+      create_release:
+        description: 'Create a GitHub release'
         required: false
-        type: string
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -79,13 +80,15 @@ jobs:
           retention-days: 30
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.create_release)
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.ext_info.outputs.version }}
+          name: v${{ steps.ext_info.outputs.version }}
           files: ${{ steps.ext_info.outputs.vsix_path }}
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
