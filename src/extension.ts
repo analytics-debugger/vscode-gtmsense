@@ -14,9 +14,9 @@ let diagnosticsProvider: GtmDiagnosticsProvider;
 export let outputChannel: vscode.OutputChannel;
 
 export async function activate(context: vscode.ExtensionContext) {
-	outputChannel = vscode.window.createOutputChannel('GTMSense');
-	outputChannel.appendLine('GTMSense is now active!');
-	console.log('GTMSense is now active!');
+	outputChannel = vscode.window.createOutputChannel('GTMSense', { log: true });
+	const version = context.extension.packageJSON.version;
+	outputChannel.appendLine(`GTMSense Loaded: v${version} | VSCode v${vscode.version}`);	
 
 	// Close any previously opened gtmsense:// files since they won't work after restart
 	const gtmTabs = vscode.window.tabGroups.all
