@@ -3,7 +3,7 @@
   "displayName": "GTMSense",
   "publisher": "analytics-debugger",
   "description": "Edit Google Tag Manager Custom HTML tags and JavaScript variables directly in VS Code",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "engines": {
     "vscode": "^1.106.1"
   },
@@ -77,7 +77,10 @@
     "languages": [
       {
         "id": "gtm-javascript",
-        "aliases": ["GTM JavaScript", "gtmjs"],
+        "aliases": [
+          "GTM JavaScript",
+          "gtmjs"
+        ],
         "extensions": [],
         "configuration": "./language-configuration.json"
       }
