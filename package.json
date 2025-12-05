@@ -183,11 +183,13 @@
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",
-    "compile": "pnpm run check-types && pnpm run lint && node esbuild.js",
+    "compile": "pnpm run compile:server && pnpm run check-types && pnpm run lint && node esbuild.js",
+    "compile:server": "cd server && npm run compile",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-    "package": "pnpm run check-types && pnpm run lint && node esbuild.js --production",
+    "watch:server": "cd server && npm run watch",
+    "package": "pnpm run compile:server && pnpm run check-types && pnpm run lint && node esbuild.js --production",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
@@ -195,10 +197,14 @@
     "lint": "eslint src",
     "test": "vscode-test",
     "vsix": "vsce package -o releases/",
+    "postinstall": "cd server && npm install",
     "bump:patch": "pnpm version patch --no-git-tag-version && git add package.json && git commit -m \"chore: bump to $(node -p \"require('./package.json').version\")\" && git push",
     "bump:minor": "pnpm version minor --no-git-tag-version && git add package.json && git commit -m \"chore: bump to $(node -p \"require('./package.json').version\")\" && git push",
     "bump:major": "pnpm version major --no-git-tag-version && git add package.json && git commit -m \"chore: bump to $(node -p \"require('./package.json').version\")\" && git push",
     "release": "node scripts/release.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/vscode": "^1.106.1",

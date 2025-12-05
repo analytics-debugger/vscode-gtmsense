@@ -1,23 +1,109 @@
 {
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "GTM JavaScript",
   "scopeName": "source.gtm.js",
   "patterns": [
-    {
-      "include": "#gtm-variable"
-    },
-    {
-      "include": "source.js"
-    }
+    { "include": "#gtm-variable" },
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
   ],
   "repository": {
     "gtm-variable": {
       "name": "variable.other.gtm",
       "match": "\\{\\{[^}]+\\}\\}",
       "captures": {
-        "0": {
-          "name": "variable.other.gtm.bracket"
-        }
+        "0": { "name": "variable.other.gtm.bracket" }
       }
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.js",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.js",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.js",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "name": "constant.character.escape.js", "match": "\\\\." }]
+        },
+        {
+          "name": "string.quoted.double.js",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "name": "constant.character.escape.js", "match": "\\\\." }]
+        },
+        {
+          "name": "string.template.js",
+          "begin": "`",
+          "end": "`",
+          "patterns": [
+            { "name": "constant.character.escape.js", "match": "\\\\." },
+            { "name": "variable.other.template.js", "begin": "\\$\\{", "end": "\\}" }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.js",
+          "match": "\\b(0x[0-9a-fA-F]+|\\d+(\\.\\d+)?([eE][+-]?\\d+)?)\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.js",
+          "match": "\\b(if|else|for|while|do|switch|case|default|break|continue|return|throw|try|catch|finally)\\b"
+        },
+        {
+          "name": "storage.type.js",
+          "match": "\\b(var|let|const|function)\\b"
+        },
+        {
+          "name": "constant.language.js",
+          "match": "\\b(true|false|null|undefined)\\b"
+        },
+        {
+          "name": "keyword.operator.js",
+          "match": "\\b(typeof|instanceof|new|delete|in)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.js",
+          "match": "(===|!==|==|!=|<=|>=|<|>|&&|\\|\\||\\+|-|\\*|/|%|=|\\+=|-=|\\*=|/=)"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.block.js",
+          "match": "[{}\\[\\]()]"
+        },
+        {
+          "name": "punctuation.separator.js",
+          "match": "[;,.]"
+        }
+      ]
     }
   }
 }

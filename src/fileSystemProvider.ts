@@ -225,14 +225,14 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		console.log(`Loaded ${tagsDir.entries.size} tags, ${variablesDir.entries.size} variables, and ${templatesDir.entries.size} templates for ${containerKey}`);
 
 		// Fire change events
-		this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri: vscode.Uri.parse('gtmsense:/') }]);
+		this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri: vscode.Uri.from({ scheme: 'gtmsense', path: '/' }) }]);
 	}
 
 	removeContainer(containerName: string): void {
 		this.root.entries.delete(containerName);
 		this.containers.delete(containerName);
 		this.variableNames.delete(containerName);
-		this._emitter.fire([{ type: vscode.FileChangeType.Deleted, uri: vscode.Uri.parse(`gtmsense:/${containerName}`) }]);
+		this._emitter.fire([{ type: vscode.FileChangeType.Deleted, uri: vscode.Uri.from({ scheme: 'gtmsense', path: `/${containerName}` }) }]);
 	}
 
 	getContainers(): ContainerInfo[] {
@@ -298,7 +298,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 			this.variableNames.set(containerName, names);
 		}
 
-		this._emitter.fire([{ type: vscode.FileChangeType.Created, uri: vscode.Uri.parse(`gtmsense:/${containerName}/${folder}/${fileName}`) }]);
+		this._emitter.fire([{ type: vscode.FileChangeType.Created, uri: vscode.Uri.from({ scheme: 'gtmsense', path: `/${containerName}/${folder}/${fileName}` }) }]);
 	}
 
 	private lookup(uri: vscode.Uri): Entry | undefined {
@@ -648,7 +648,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 			this.variableNames.set(containerName, names);
 		}
 
-		const originalUri = vscode.Uri.parse(`gtmsense:/${containerName}/${folder}/${originalFileName}`);
+		const originalUri = vscode.Uri.from({ scheme: 'gtmsense', path: `/${containerName}/${folder}/${originalFileName}` });
 
 		// Remove from modified files
 		this.modifiedFiles.delete(uri.toString());
@@ -713,7 +713,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 
 		console.log(`After rename - folder entries: ${Array.from(folderDir.entries.keys()).join(', ')}`);
 
-		const newUri = vscode.Uri.parse(`gtmsense:/${containerName}/${folder}/${newFileName}`);
+		const newUri = vscode.Uri.from({ scheme: 'gtmsense', path: `/${containerName}/${folder}/${newFileName}` });
 
 		// Remove old modified entry if exists
 		this.modifiedFiles.delete(uri.toString());

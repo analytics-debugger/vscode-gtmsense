@@ -119,7 +119,7 @@ export class GtmSidebarProvider implements vscode.TreeDataProvider<GtmTreeItem> 
 
 		if (element.itemType === 'folder' && element.containerName && element.folderName) {
 			// Show files in folder (or template directories for templates folder)
-			const uri = vscode.Uri.parse(`gtmsense:/${element.containerName}/${element.folderName}`);
+			const uri = vscode.Uri.from({ scheme: 'gtmsense', path: `/${element.containerName}/${element.folderName}` });
 			try {
 				const entries = this.fsProvider.readDirectory(uri);
 
@@ -144,7 +144,7 @@ export class GtmSidebarProvider implements vscode.TreeDataProvider<GtmTreeItem> 
 					return entries
 						.filter(([, type]) => type === vscode.FileType.File)
 						.map(([name]) => {
-							const fileUri = vscode.Uri.parse(`gtmsense:/${element.containerName}/${element.folderName}/${name}`);
+							const fileUri = vscode.Uri.from({ scheme: 'gtmsense', path: `/${element.containerName}/${element.folderName}/${name}` });
 							const isModified = this.fsProvider.isModified(fileUri);
 							return new GtmTreeItem(
 								name.replace(/\.js$/, ''), // Remove .js extension for display
@@ -166,13 +166,13 @@ export class GtmSidebarProvider implements vscode.TreeDataProvider<GtmTreeItem> 
 
 		if (element.itemType === 'template' && element.containerName && element.templateName) {
 			// Show section files inside a template
-			const uri = vscode.Uri.parse(`gtmsense:/${element.containerName}/templates/${element.templateName}`);
+			const uri = vscode.Uri.from({ scheme: 'gtmsense', path: `/${element.containerName}/templates/${element.templateName}` });
 			try {
 				const entries = this.fsProvider.readDirectory(uri);
 				return entries
 					.filter(([, type]) => type === vscode.FileType.File)
 					.map(([name]) => {
-						const fileUri = vscode.Uri.parse(`gtmsense:/${element.containerName}/templates/${element.templateName}/${name}`);
+						const fileUri = vscode.Uri.from({ scheme: 'gtmsense', path: `/${element.containerName}/templates/${element.templateName}/${name}` });
 						const isModified = this.fsProvider.isModified(fileUri);
 						// Remove extension for display
 						const displayName = name.replace(/\.(js|json|txt)$/, '');

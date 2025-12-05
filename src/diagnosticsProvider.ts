@@ -155,6 +155,15 @@ export class GtmDiagnosticsProvider {
 			return;
 		}
 
+		// Skip ES5 checks for template files - they support ES6
+		// Template sections are in paths like: /container/templates/templateName/SECTION.js
+		const path = document.uri.path;
+		if (path.includes('/templates/')) {
+			// Templates use sandboxed JS which supports ES6
+			this.diagnosticCollection.set(document.uri, []);
+			return;
+		}
+
 		const diagnostics: vscode.Diagnostic[] = [];
 		const text = document.getText();
 

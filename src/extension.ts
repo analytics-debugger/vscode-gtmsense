@@ -2,11 +2,13 @@ import * as vscode from 'vscode';
 import { GtmFileSystemProvider } from './fileSystemProvider';
 import { GtmSidebarProvider } from './sidebarProvider';
 import { GtmCompletionProvider } from './completionProvider';
+// Template completion/hover now handled by Language Server in ./languageClient.ts
 import { GtmDiagnosticsProvider } from './diagnosticsProvider';
 import { GtmDecorationProvider } from './decorationProvider';
 import { GtmAccountProvider } from './accountProvider';
 import { GoogleAuthenticationProvider } from './auth';
 import { listAccounts, listContainers, listWorkspaces, createWorkspace, createTag, createVariable } from './gtmClient';
+import { activateLanguageClient, deactivateLanguageClient } from './languageClient';
 
 let fsProvider: GtmFileSystemProvider;
 let sidebarProvider: GtmSidebarProvider;
@@ -79,6 +81,9 @@ export async function activate(context: vscode.ExtensionContext) {
 	sidebarProvider = new GtmSidebarProvider(fsProvider);
 	diagnosticsProvider = new GtmDiagnosticsProvider();
 	const decorationProvider = new GtmDecorationProvider(fsProvider);
+
+	// Activate GTM Language Server for template IntelliSense
+	activateLanguageClient(context);
 
 	// Register Google authentication provider
 	const authProvider = new GoogleAuthenticationProvider(context);
@@ -294,7 +299,7 @@ export async function activate(context: vscode.ExtensionContext) {
 					vscode.window.showInformationMessage(`Loaded container: ${containerPick.label}`);
 
 					// Break out of all loops after successful load
-					break;
+					break selectAccount;
 				} // end selectContainer loop
 			} // end selectAccount loop
 		} catch (error) {
@@ -323,7 +328,8 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
-	// Register completion provider for GTM variables
+	// Register completion provider for GTM variables ({{var}} syntax)
+	// Note: Template API completions (require, hover, signature help) are handled by the Language Server
 	const completionProvider = new GtmCompletionProvider(fsProvider);
 	context.subscriptions.push(
 		vscode.languages.registerCompletionItemProvider(
@@ -361,7 +367,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			sidebarProvider.refresh();
 
 			// Open the new file
-			const uri = vscode.Uri.parse(`gtmsense:/${container.key}/tags/${fsProvider.sanitizeFileName(tagName)}.js`);
+			const uri = vscode.Uri.from({ scheme: 'gtmsense', path: `/${container.key}/tags/${fsProvider.sanitizeFileName(tagName)}.js` });
 			await vscode.window.showTextDocument(uri);
 
 			vscode.window.showInformationMessage(`Created tag: ${tagName}`);
@@ -398,7 +404,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			sidebarProvider.refresh();
 
 			// Open the new file
-			const uri = vscode.Uri.parse(`gtmsense:/${container.key}/variables/${fsProvider.sanitizeFileName(varName)}.js`);
+			const uri = vscode.Uri.from({ scheme: 'gtmsense', path: `/${container.key}/variables/${fsProvider.sanitizeFileName(varName)}.js` });
 			await vscode.window.showTextDocument(uri);
 
 			vscode.window.showInformationMessage(`Created variable: ${varName}`);
@@ -665,4 +671,6 @@ async function pickContainer(fsProvider: GtmFileSystemProvider): Promise<string 
 	return pick?.key;
 }
 
-export function deactivate() {}
+export function deactivate(): Thenable<void> | undefined {
+	return deactivateLanguageClient();
+}
