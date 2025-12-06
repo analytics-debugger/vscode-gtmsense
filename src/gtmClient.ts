@@ -33,6 +33,24 @@ export interface GtmContainer {
 	publicId: string; // GTM-XXXXXX
 	name: string;
 	path: string;
+	usageContext: string[]; // e.g., ['web'] or ['server']
+}
+
+// Format container type for display
+export function formatContainerType(usageContext: string[] | undefined): string {
+	if (!usageContext || usageContext.length === 0) {
+		return 'Unknown';
+	}
+	// Map usage context values to readable labels
+	return usageContext.map(ctx => {
+		switch (ctx.toLowerCase()) {
+			case 'web': return 'Web';
+			case 'server': return 'Server';
+			case 'android': return 'Android';
+			case 'ios': return 'iOS';
+			default: return ctx;
+		}
+	}).join(', ');
 }
 
 export interface GtmWorkspace {
@@ -81,6 +99,7 @@ export async function listAccounts(): Promise<GtmAccount[]> {
 
 export async function listContainers(accountPath: string): Promise<GtmContainer[]> {
 	const result = await gtmFetch<{ container: GtmContainer[] }>(`/${accountPath}/containers`);
+	
 	return result.container || [];
 }
 

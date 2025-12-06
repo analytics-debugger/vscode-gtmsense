@@ -44,6 +44,7 @@ export interface ContainerInfo {
 	workspacePath: string;
 	workspaceName: string;
 	key: string; // Unique key: "containerName (workspaceName)"
+	containerType: string; // e.g., "Web", "Server", "Web, Server"
 }
 
 export interface ModifiedFile {
@@ -91,8 +92,8 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		};
 	}
 
-	async addContainer(containerName: string, publicId: string, workspacePath: string, workspaceName: string): Promise<void> {
-		console.log(`Adding container: ${containerName} (${publicId}, workspace: ${workspaceName})`);
+	async addContainer(containerName: string, publicId: string, workspacePath: string, workspaceName: string, containerType: string): Promise<void> {
+		console.log(`Adding container: ${containerName} (${publicId}, workspace: ${workspaceName}, type: ${containerType})`);
 
 		// Use a unique key for container + workspace combination
 		const containerKey = `${containerName} (${workspaceName})`;
@@ -220,7 +221,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 
 		// Add container to root
 		this.root.entries.set(containerKey, containerDir);
-		this.containers.set(containerKey, { name: containerName, publicId, workspacePath, workspaceName, key: containerKey });
+		this.containers.set(containerKey, { name: containerName, publicId, workspacePath, workspaceName, key: containerKey, containerType });
 
 		console.log(`Loaded ${tagsDir.entries.size} tags, ${variablesDir.entries.size} variables, and ${templatesDir.entries.size} templates for ${containerKey}`);
 

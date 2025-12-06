@@ -77,10 +77,10 @@ export class GtmSidebarProvider implements vscode.TreeDataProvider<GtmTreeItem> 
 		if (!element) {
 			// Root level - show unique containers (grouped by name)
 			const containers = this.fsProvider.getContainers();
-			const uniqueContainers = new Map<string, { name: string; publicId: string }>();
+			const uniqueContainers = new Map<string, { name: string; publicId: string; containerType: string }>();
 			for (const c of containers) {
 				if (!uniqueContainers.has(c.name)) {
-					uniqueContainers.set(c.name, { name: c.name, publicId: c.publicId });
+					uniqueContainers.set(c.name, { name: c.name, publicId: c.publicId, containerType: c.containerType });
 				}
 			}
 			return Array.from(uniqueContainers.values()).map(c => new GtmTreeItem(
@@ -90,7 +90,7 @@ export class GtmSidebarProvider implements vscode.TreeDataProvider<GtmTreeItem> 
 				c.name, // Use container name for grouping
 				undefined,
 				undefined,
-				c.publicId
+				`${c.publicId} (${c.containerType})`
 			));
 		}
 

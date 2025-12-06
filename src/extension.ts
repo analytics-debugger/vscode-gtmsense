@@ -7,7 +7,7 @@ import { GtmDiagnosticsProvider } from './diagnosticsProvider';
 import { GtmDecorationProvider } from './decorationProvider';
 import { GtmAccountProvider } from './accountProvider';
 import { GoogleAuthenticationProvider } from './auth';
-import { listAccounts, listContainers, listWorkspaces, createWorkspace, createTag, createVariable, createTemplate } from './gtmClient';
+import { listAccounts, listContainers, listWorkspaces, createWorkspace, createTag, createVariable, createTemplate, formatContainerType } from './gtmClient';
 import { activateLanguageClient, deactivateLanguageClient } from './languageClient';
 
 let fsProvider: GtmFileSystemProvider;
@@ -205,13 +205,13 @@ export async function activate(context: vscode.ExtensionContext) {
 				}
 
 				selectContainer: while (true) {
-					let containerPick: { label: string; description: string; path: string; publicId: string; isRefresh: boolean; isBack: boolean } | undefined;
+					let containerPick: { label: string; description: string; path: string; publicId: string; containerType: string; isRefresh: boolean; isBack: boolean } | undefined;
 					while (true) {
 						containerPick = await vscode.window.showQuickPick(
 							[
-								{ label: '$(arrow-left) ..', description: 'Back to Accounts', path: '', publicId: '', isRefresh: false, isBack: true },
-								...containers.map(c => ({ label: c.name, description: c.publicId, path: c.path, publicId: c.publicId, isRefresh: false, isBack: false })),
-								{ label: '$(refresh) Refresh Containers', description: '', path: '', publicId: '', isRefresh: true, isBack: false }
+								{ label: '$(arrow-left) ..', description: 'Back to Accounts', path: '', publicId: '', containerType: '', isRefresh: false, isBack: true },
+								...containers.map(c => ({ label: c.name, description: `${c.publicId} (${formatContainerType(c.usageContext)})`, path: c.path, publicId: c.publicId, containerType: formatContainerType(c.usageContext), isRefresh: false, isBack: false })),
+								{ label: '$(refresh) Refresh Containers', description: '', path: '', publicId: '', containerType: '', isRefresh: true, isBack: false }
 							],
 							{ placeHolder: `Select Container (${accountPick.label})` }
 						);
@@ -291,7 +291,7 @@ export async function activate(context: vscode.ExtensionContext) {
 					}
 
 					// Add the container
-					await fsProvider.addContainer(containerPick.label, containerPick.publicId, finalWorkspace.path, finalWorkspace.name);
+					await fsProvider.addContainer(containerPick.label, containerPick.publicId, finalWorkspace.path, finalWorkspace.name, containerPick.containerType);
 
 					// Refresh sidebar
 					sidebarProvider.refresh();
@@ -743,7 +743,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			}
 
 			// Load the new workspace
-			await fsProvider.addContainer(containerName, existingContainer.publicId, created.path, created.name);
+			await fsProvider.addContainer(containerName, existingContainer.publicId, created.path, created.name, existingContainer.containerType);
 			sidebarProvider.refresh();
 
 			vscode.window.showInformationMessage(`Created and loaded workspace: ${workspaceName}`);
