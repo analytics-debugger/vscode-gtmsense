@@ -301,6 +301,58 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		this._emitter.fire([{ type: vscode.FileChangeType.Created, uri: vscode.Uri.from({ scheme: 'gtmsense', path: `/${containerName}/${folder}/${fileName}` }) }]);
 	}
 
+	addTemplateEntry(containerName: string, template: GtmTemplate): string {
+		const containerDir = this.root.entries.get(containerName);
+		if (!containerDir || containerDir.type !== 'directory') {
+			throw new Error(`Container ${containerName} not found`);
+		}
+
+		const templatesDir = containerDir.entries.get('templates');
+		if (!templatesDir || templatesDir.type !== 'directory') {
+			throw new Error('Templates folder not found');
+		}
+
+		const sections = parseTemplateSections(template.templateData || '');
+		const templateDirName = this.sanitizeFileName(template.name);
+		const templateDir: DirectoryEntry = {
+			type: 'directory',
+			name: templateDirName,
+			ctime: Date.now(),
+			mtime: Date.now(),
+			entries: new Map(),
+		};
+
+		// Find the JS section to open
+		let jsFileName = '';
+
+		// Add each section as a file
+		for (const section of sections) {
+			const sectionFileName = section.name + section.extension;
+			const sectionEntry: FileEntry = {
+				type: 'file',
+				name: sectionFileName,
+				data: new TextEncoder().encode(section.content),
+				ctime: Date.now(),
+				mtime: Date.now(),
+				gtmItem: template,
+				itemType: 'template-section',
+				sectionName: section.name,
+			};
+			templateDir.entries.set(sectionFileName, sectionEntry);
+
+			// Track the JS section file
+			if (section.name.includes('SANDBOXED_JS')) {
+				jsFileName = sectionFileName;
+			}
+		}
+
+		templatesDir.entries.set(templateDirName, templateDir);
+
+		this._emitter.fire([{ type: vscode.FileChangeType.Created, uri: vscode.Uri.from({ scheme: 'gtmsense', path: `/${containerName}/templates/${templateDirName}` }) }]);
+
+		return jsFileName;
+	}
+
 	private lookup(uri: vscode.Uri): Entry | undefined {
 		const parts = uri.path.split('/').filter(p => p).map(p => decodeURIComponent(p));
 		let entry: Entry = this.root;

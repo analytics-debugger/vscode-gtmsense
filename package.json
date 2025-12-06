@@ -44,6 +44,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "gtmsense.createTemplate",
+        "title": "GTM-SENSE: Create Custom Template",
+        "icon": "$(add)"
+      },
+      {
         "command": "gtmsense.pushChanges",
         "title": "GTM-SENSE: Push Changes",
         "icon": "$(cloud-upload)"
@@ -154,12 +159,21 @@
           "when": "view == gtmContainers && viewItem == folder && viewItemFolderName == variables"
         },
         {
+          "command": "gtmsense.createTemplate",
+          "when": "view == gtmContainers && viewItem == folder && viewItemFolderName == templates"
+        },
+        {
           "command": "gtmsense.createTag",
           "when": "view == gtmContainers && viewItem == workspace",
           "group": "1_create"
         },
         {
           "command": "gtmsense.createVariable",
+          "when": "view == gtmContainers && viewItem == workspace",
+          "group": "1_create"
+        },
+        {
+          "command": "gtmsense.createTemplate",
           "when": "view == gtmContainers && viewItem == workspace",
           "group": "1_create"
         },

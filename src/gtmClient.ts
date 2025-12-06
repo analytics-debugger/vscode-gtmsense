@@ -159,6 +159,53 @@ export async function createVariable(workspacePath: string, name: string, javasc
 	});
 }
 
+export async function createTemplate(workspacePath: string, name: string, templateType: 'web' | 'server'): Promise<GtmTemplate> {
+	const jsSection = templateType === 'web' ? '___SANDBOXED_JS_FOR_WEB_TEMPLATE___' : '___SANDBOXED_JS_FOR_SERVER___';
+	const defaultTemplateData = `___INFO___
+
+{
+  "type": "TAG",
+  "id": "cvt_temp_public_id",
+  "version": 1,
+  "securityGroups": [],
+  "displayName": "${name}",
+  "brand": {},
+  "description": "",
+  "containerContexts": [
+    "${templateType === 'web' ? 'WEB' : 'SERVER'}"
+  ]
+}
+
+
+___TEMPLATE_PARAMETERS___
+
+[]
+
+
+${jsSection}
+
+// Enter your template code here
+
+
+___WEB_PERMISSIONS___
+
+[]
+
+
+___TESTS___
+
+scenarios: []
+`;
+
+	return gtmFetch<GtmTemplate>(`/${workspacePath}/templates`, {
+		method: 'POST',
+		body: JSON.stringify({
+			name,
+			templateData: defaultTemplateData,
+		}),
+	});
+}
+
 export async function deleteTag(tagPath: string): Promise<void> {
 	await gtmFetch<void>(`/${tagPath}`, {
 		method: 'DELETE',

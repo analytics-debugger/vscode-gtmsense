@@ -7,7 +7,7 @@ import { GtmDiagnosticsProvider } from './diagnosticsProvider';
 import { GtmDecorationProvider } from './decorationProvider';
 import { GtmAccountProvider } from './accountProvider';
 import { GoogleAuthenticationProvider } from './auth';
-import { listAccounts, listContainers, listWorkspaces, createWorkspace, createTag, createVariable } from './gtmClient';
+import { listAccounts, listContainers, listWorkspaces, createWorkspace, createTag, createVariable, createTemplate } from './gtmClient';
 import { activateLanguageClient, deactivateLanguageClient } from './languageClient';
 
 let fsProvider: GtmFileSystemProvider;
@@ -413,6 +413,58 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	// Command to create a new template
+	const createTemplateCommand = vscode.commands.registerCommand('gtmsense.createTemplate', async (item?: { containerName?: string }) => {
+		const containerKey = item?.containerName || await pickContainer(fsProvider);
+		if (!containerKey) {
+			return;
+		}
+
+		const container = fsProvider.getContainers().find(c => c.key === containerKey);
+		if (!container) {
+			vscode.window.showErrorMessage('Container not found');
+			return;
+		}
+
+		const templateName = await vscode.window.showInputBox({
+			prompt: 'Enter template name',
+			placeHolder: 'My Custom Template'
+		});
+		if (!templateName) {
+			return;
+		}
+
+		const templateType = await vscode.window.showQuickPick(
+			[
+				{ label: 'Web', description: 'For client-side GTM containers', value: 'web' as const },
+				{ label: 'Server', description: 'For server-side GTM containers', value: 'server' as const }
+			],
+			{ placeHolder: 'Select template type' }
+		);
+		if (!templateType) {
+			return;
+		}
+
+		try {
+			const template = await createTemplate(container.workspacePath, templateName, templateType.value);
+			const jsFileName = fsProvider.addTemplateEntry(container.key, template);
+			sidebarProvider.refresh();
+
+			// Open the JS section file
+			if (jsFileName) {
+				const uri = vscode.Uri.from({
+					scheme: 'gtmsense',
+					path: `/${container.key}/templates/${fsProvider.sanitizeFileName(templateName)}/${jsFileName}`
+				});
+				await vscode.window.showTextDocument(uri);
+			}
+
+			vscode.window.showInformationMessage(`Created template: ${templateName}`);
+		} catch (error) {
+			vscode.window.showErrorMessage(`Failed to create template: ${error}`);
+		}
+	});
+
 	// Command to push all changes to GTM
 	const pushChangesCommand = vscode.commands.registerCommand('gtmsense.pushChanges', async () => {
 		if (!fsProvider.hasModifiedFiles()) {
@@ -652,7 +704,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	context.subscriptions.push(loadContainerCommand, unloadContainerCommand, createTagCommand, createVariableCommand, pushChangesCommand, discardChangesCommand, deleteItemCommand, discardItemChangesCommand, renameItemCommand, signOutCommand);
+	context.subscriptions.push(loadContainerCommand, unloadContainerCommand, createTagCommand, createVariableCommand, createTemplateCommand, pushChangesCommand, discardChangesCommand, deleteItemCommand, discardItemChangesCommand, renameItemCommand, signOutCommand);
 }
 
 async function pickContainer(fsProvider: GtmFileSystemProvider): Promise<string | undefined> {
