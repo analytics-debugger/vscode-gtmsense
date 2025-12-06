@@ -53,6 +53,21 @@ export function formatContainerType(usageContext: string[] | undefined): string 
 	}).join(', ');
 }
 
+// Get icon for container type (VS Code codicon)
+export function getContainerTypeIcon(usageContext: string[] | undefined): string {
+	if (!usageContext || usageContext.length === 0) {
+		return '$(question)';
+	}
+	const ctx = usageContext[0]?.toLowerCase();
+	switch (ctx) {
+		case 'web': return '$(globe)';
+		case 'server': return '$(server)';
+		case 'android': return '$(device-mobile)';
+		case 'ios': return '$(device-mobile)';
+		default: return '$(package)';
+	}
+}
+
 export interface GtmWorkspace {
 	workspaceId: string;
 	name: string;

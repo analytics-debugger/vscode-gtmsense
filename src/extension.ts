@@ -7,7 +7,7 @@ import { GtmDiagnosticsProvider } from './diagnosticsProvider';
 import { GtmDecorationProvider } from './decorationProvider';
 import { GtmAccountProvider } from './accountProvider';
 import { GoogleAuthenticationProvider } from './auth';
-import { listAccounts, listContainers, listWorkspaces, createWorkspace, createTag, createVariable, createTemplate, formatContainerType } from './gtmClient';
+import { listAccounts, listContainers, listWorkspaces, createWorkspace, createTag, createVariable, createTemplate, formatContainerType, getContainerTypeIcon } from './gtmClient';
 import { activateLanguageClient, deactivateLanguageClient } from './languageClient';
 
 let fsProvider: GtmFileSystemProvider;
@@ -205,13 +205,26 @@ export async function activate(context: vscode.ExtensionContext) {
 				}
 
 				selectContainer: while (true) {
-					let containerPick: { label: string; description: string; path: string; publicId: string; containerType: string; isRefresh: boolean; isBack: boolean } | undefined;
+					let containerPick: { label: string; detail?: string; path: string; publicId: string; containerType: string; isSupported: boolean; isRefresh: boolean; isBack: boolean } | undefined;
 					while (true) {
 						containerPick = await vscode.window.showQuickPick(
 							[
-								{ label: '$(arrow-left) ..', description: 'Back to Accounts', path: '', publicId: '', containerType: '', isRefresh: false, isBack: true },
-								...containers.map(c => ({ label: c.name, description: `${c.publicId} (${formatContainerType(c.usageContext)})`, path: c.path, publicId: c.publicId, containerType: formatContainerType(c.usageContext), isRefresh: false, isBack: false })),
-								{ label: '$(refresh) Refresh Containers', description: '', path: '', publicId: '', containerType: '', isRefresh: true, isBack: false }
+								{ label: '$(arrow-left) Back to Accounts', path: '', publicId: '', containerType: '', isSupported: true, isRefresh: false, isBack: true },
+								...containers.map(c => {
+									const ctx = c.usageContext?.[0]?.toLowerCase();
+									const isSupported = ctx === 'web' || ctx === 'server';
+									return {
+										label: `${getContainerTypeIcon(c.usageContext)} ${c.name}`,
+										detail: isSupported ? c.publicId : `${c.publicId} (not supported)`,
+										path: c.path,
+										publicId: c.publicId,
+										containerType: formatContainerType(c.usageContext),
+										isSupported,
+										isRefresh: false,
+										isBack: false
+									};
+								}),
+								{ label: '$(refresh) Refresh Containers', path: '', publicId: '', containerType: '', isSupported: true, isRefresh: true, isBack: false }
 							],
 							{ placeHolder: `Select Container (${accountPick.label})` }
 						);
@@ -227,6 +240,11 @@ export async function activate(context: vscode.ExtensionContext) {
 						if (containerPick.isRefresh) {
 							containers = await getCachedContainers(accountPick.path, true);
 							outputChannel.info(`Refreshed ${containers.length} containers`);
+							continue;
+						}
+
+						if (!containerPick.isSupported) {
+							vscode.window.showWarningMessage(`GTMSense only supports Web and Server containers. "${containerPick.containerType}" containers are not supported.`);
 							continue;
 						}
 
