@@ -696,6 +696,62 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage('Signed out of GTMSense');
 	});
 
+	// Command to create a new workspace for a container
+	const createWorkspaceCommand = vscode.commands.registerCommand('gtmsense.createWorkspace', async (item?: { label?: string; containerName?: string; publicId?: string }) => {
+		// Get the container name from the tree item
+		const containerName = item?.label || item?.containerName;
+		if (!containerName) {
+			vscode.window.showErrorMessage('No container selected');
+			return;
+		}
+
+		// Find a loaded container with this name to get the container path
+		const containers = fsProvider.getContainers();
+		const existingContainer = containers.find(c => c.name === containerName);
+
+		if (!existingContainer) {
+			vscode.window.showErrorMessage(`Container "${containerName}" is not loaded. Load a workspace first.`);
+			return;
+		}
+
+		// Extract container path from workspace path (format: accounts/.../containers/.../workspaces/...)
+		const workspacePathParts = existingContainer.workspacePath.split('/');
+		const workspacesIndex = workspacePathParts.indexOf('workspaces');
+		if (workspacesIndex === -1) {
+			vscode.window.showErrorMessage('Invalid workspace path format');
+			return;
+		}
+		const containerPath = workspacePathParts.slice(0, workspacesIndex).join('/');
+
+		const workspaceName = await vscode.window.showInputBox({
+			prompt: 'Enter workspace name',
+			placeHolder: 'My New Workspace'
+		});
+		if (!workspaceName) {
+			return;
+		}
+
+		try {
+			const created = await createWorkspace(containerPath, workspaceName);
+			// Invalidate workspace cache
+			cache.workspaces.delete(containerPath);
+
+			// Check if this workspace is already loaded
+			if (fsProvider.hasContainer(containerName, workspaceName)) {
+				vscode.window.showWarningMessage(`Workspace "${workspaceName}" already loaded`);
+				return;
+			}
+
+			// Load the new workspace
+			await fsProvider.addContainer(containerName, existingContainer.publicId, created.path, created.name);
+			sidebarProvider.refresh();
+
+			vscode.window.showInformationMessage(`Created and loaded workspace: ${workspaceName}`);
+		} catch (error) {
+			vscode.window.showErrorMessage(`Failed to create workspace: ${error}`);
+		}
+	});
+
 	// Refresh sidebar and badge when modifications change
 	context.subscriptions.push(
 		fsProvider.onDidChangeModified(() => {
@@ -704,7 +760,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	context.subscriptions.push(loadContainerCommand, unloadContainerCommand, createTagCommand, createVariableCommand, createTemplateCommand, pushChangesCommand, discardChangesCommand, deleteItemCommand, discardItemChangesCommand, renameItemCommand, signOutCommand);
+	context.subscriptions.push(loadContainerCommand, unloadContainerCommand, createTagCommand, createVariableCommand, createTemplateCommand, createWorkspaceCommand, pushChangesCommand, discardChangesCommand, deleteItemCommand, discardItemChangesCommand, renameItemCommand, signOutCommand);
 }
 
 async function pickContainer(fsProvider: GtmFileSystemProvider): Promise<string | undefined> {

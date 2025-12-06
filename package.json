@@ -77,6 +77,11 @@
         "command": "gtmsense.signOut",
         "title": "GTM-SENSE: Sign Out",
         "icon": "$(sign-out)"
+      },
+      {
+        "command": "gtmsense.createWorkspace",
+        "title": "GTM-SENSE: Create Workspace",
+        "icon": "$(add)"
       }
     ],
     "languages": [
@@ -149,6 +154,10 @@
           "command": "gtmsense.unloadContainer",
           "when": "view == gtmContainers && viewItem == container",
           "group": "inline"
+        },
+        {
+          "command": "gtmsense.createWorkspace",
+          "when": "view == gtmContainers && viewItem == container"
         },
         {
           "command": "gtmsense.createTag",
