@@ -21,6 +21,9 @@ export class GtmTreeItem extends vscode.TreeItem {
 		// Set contextValue - modified files get a special context for menu visibility
 		if (itemType === 'file' && isModified) {
 			this.contextValue = 'file-modified';
+		} else if (itemType === 'folder' && folderName) {
+			// Include folder name in context for menu filtering (e.g., "folder-tags", "folder-variables", "folder-templates")
+			this.contextValue = `folder-${folderName}`;
 		} else {
 			this.contextValue = itemType;
 		}

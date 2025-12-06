@@ -152,30 +152,15 @@
         },
         {
           "command": "gtmsense.createTag",
-          "when": "view == gtmContainers && viewItem == folder && viewItemFolderName == tags"
+          "when": "view == gtmContainers && viewItem == folder-tags"
         },
         {
           "command": "gtmsense.createVariable",
-          "when": "view == gtmContainers && viewItem == folder && viewItemFolderName == variables"
+          "when": "view == gtmContainers && viewItem == folder-variables"
         },
         {
           "command": "gtmsense.createTemplate",
-          "when": "view == gtmContainers && viewItem == folder && viewItemFolderName == templates"
-        },
-        {
-          "command": "gtmsense.createTag",
-          "when": "view == gtmContainers && viewItem == workspace",
-          "group": "1_create"
-        },
-        {
-          "command": "gtmsense.createVariable",
-          "when": "view == gtmContainers && viewItem == workspace",
-          "group": "1_create"
-        },
-        {
-          "command": "gtmsense.createTemplate",
-          "when": "view == gtmContainers && viewItem == workspace",
-          "group": "1_create"
+          "when": "view == gtmContainers && viewItem == folder-templates"
         },
         {
           "command": "gtmsense.renameItem",
