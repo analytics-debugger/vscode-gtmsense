@@ -8,12 +8,19 @@ import { GtmDecorationProvider } from './decorationProvider';
 import { GtmAccountProvider } from './accountProvider';
 import { GoogleAuthenticationProvider } from './auth';
 import { listAccounts, listContainers, listWorkspaces, createWorkspace, createTag, createVariable, createTemplate, formatContainerType, getContainerTypeIcon } from './gtmClient';
+import { isAuthenticated } from './auth';
 import { activateLanguageClient, deactivateLanguageClient } from './languageClient';
 
 let fsProvider: GtmFileSystemProvider;
 let sidebarProvider: GtmSidebarProvider;
 let diagnosticsProvider: GtmDiagnosticsProvider;
 export let outputChannel: vscode.LogOutputChannel;
+
+// Update the gtmsense.isLoggedIn context for conditional UI
+async function updateLoginContext(): Promise<void> {
+	const loggedIn = await isAuthenticated();
+	await vscode.commands.executeCommand('setContext', 'gtmsense.isLoggedIn', loggedIn);
+}
 
 // Cache for accounts, containers, and workspaces
 const cache = {
@@ -119,8 +126,12 @@ export async function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		authProvider.onDidChangeSessions(() => {
 			accountProvider.refresh();
+			updateLoginContext();
 		})
 	);
+
+	// Set initial login context
+	updateLoginContext();
 
 	// Update badge when modifications change
 	const updateBadge = () => {
@@ -160,55 +171,91 @@ export async function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
+	// Helper to show QuickPick with loading state
+	async function showQuickPickWithLoading<T extends vscode.QuickPickItem>(
+		placeholder: string,
+		loadItems: () => Promise<T[]>
+	): Promise<T | undefined> {
+		return new Promise((resolve) => {
+			const quickPick = vscode.window.createQuickPick<T>();
+			quickPick.placeholder = placeholder;
+			quickPick.busy = true;
+			quickPick.enabled = false;
+			quickPick.show();
+
+			loadItems().then(items => {
+				quickPick.items = items;
+				quickPick.busy = false;
+				quickPick.enabled = true;
+			}).catch(err => {
+				quickPick.hide();
+				vscode.window.showErrorMessage(`Failed to load: ${err}`);
+				resolve(undefined);
+			});
+
+			quickPick.onDidAccept(() => {
+				const selected = quickPick.selectedItems[0];
+				quickPick.hide();
+				resolve(selected);
+			});
+
+			quickPick.onDidHide(() => {
+				quickPick.dispose();
+				resolve(undefined);
+			});
+		});
+	}
+
 	// Command to load a container
 	const loadContainerCommand = vscode.commands.registerCommand('gtmsense.loadContainer', async () => {
 		try {
-			let accounts = await getCachedAccounts();
-			outputChannel.info(`Fetched ${accounts.length} accounts`);
+			// Step 1: Select account (with loading)
+			type AccountItem = vscode.QuickPickItem & { path: string; isRefresh: boolean };
+			let accounts: Awaited<ReturnType<typeof listAccounts>> | null = null;
 
-			if (accounts.length === 0) {
-				vscode.window.showErrorMessage('No GTM accounts found');
-				return;
-			}
-
-			// Outer loop to allow going back from containers to accounts
 			selectAccount: while (true) {
-				// Step 1: Select account
-				let accountPick: { label: string; path: string; isRefresh: boolean } | undefined;
-				while (true) {
-					accountPick = await vscode.window.showQuickPick(
-						[
+				const accountPick = await showQuickPickWithLoading<AccountItem>(
+					'Select GTM Account',
+					async () => {
+						if (!accounts) {
+							accounts = await getCachedAccounts();
+							outputChannel.info(`Fetched ${accounts.length} accounts`);
+						}
+						if (accounts.length === 0) {
+							throw new Error('No GTM accounts found');
+						}
+						return [
 							...accounts.map(a => ({ label: a.name, path: a.path, isRefresh: false })),
 							{ label: '$(refresh) Refresh Accounts', path: '', isRefresh: true }
-						],
-						{ placeHolder: 'Select GTM Account' }
-					);
-
-					if (!accountPick) {
-						return;
+						];
 					}
+				);
 
-					if (accountPick.isRefresh) {
-						accounts = await getCachedAccounts(true);
-						outputChannel.info(`Refreshed ${accounts.length} accounts`);
-						continue;
-					}
-
-					break;
-				}
-
-				// Step 2: Select container
-				let containers = await getCachedContainers(accountPick.path);
-				if (containers.length === 0) {
-					vscode.window.showErrorMessage('No containers found');
+				if (!accountPick) {
 					return;
 				}
 
+				if (accountPick.isRefresh) {
+					accounts = await getCachedAccounts(true);
+					outputChannel.info(`Refreshed ${accounts.length} accounts`);
+					continue;
+				}
+
+				// Step 2: Select container (with loading)
+				type ContainerItem = vscode.QuickPickItem & { name: string; path: string; publicId: string; containerType: string; isSupported: boolean; isRefresh: boolean; isBack: boolean };
+				let containers: Awaited<ReturnType<typeof listContainers>> | null = null;
+
 				selectContainer: while (true) {
-					let containerPick: { label: string; name: string; description?: string; detail?: string; path: string; publicId: string; containerType: string; isSupported: boolean; isRefresh: boolean; isBack: boolean } | undefined;
-					while (true) {
-						containerPick = await vscode.window.showQuickPick(
-							[
+					const containerPick = await showQuickPickWithLoading<ContainerItem>(
+						`Select Container (${accountPick.label})`,
+						async () => {
+							if (!containers) {
+								containers = await getCachedContainers(accountPick.path);
+							}
+							if (containers.length === 0) {
+								throw new Error('No containers found');
+							}
+							return [
 								{ label: '$(arrow-left) Back to Accounts', name: '', path: '', publicId: '', containerType: '', isSupported: true, isRefresh: false, isBack: true },
 								...containers.map(c => {
 									const ctx = c.usageContext?.[0]?.toLowerCase();
@@ -230,45 +277,47 @@ export async function activate(context: vscode.ExtensionContext) {
 									};
 								}),
 								{ label: '$(refresh) Refresh Containers', name: '', path: '', publicId: '', containerType: '', isSupported: true, isRefresh: true, isBack: false }
-							],
-							{ placeHolder: `Select Container (${accountPick.label})` }
-						);
-
-						if (!containerPick) {
-							return;
+							];
 						}
+					);
 
-						if (containerPick.isBack) {
-							continue selectAccount;
-						}
-
-						if (containerPick.isRefresh) {
-							containers = await getCachedContainers(accountPick.path, true);
-							outputChannel.info(`Refreshed ${containers.length} containers`);
-							continue;
-						}
-
-						if (!containerPick.isSupported) {
-							vscode.window.showWarningMessage(`GTMSense only supports Web and Server containers. "${containerPick.containerType}" containers are not supported.`);
-							continue;
-						}
-
-						break;
+					if (!containerPick) {
+						return;
 					}
 
-					// Step 3: Select or create workspace
-					let workspaces = await getCachedWorkspaces(containerPick.path);
+					if (containerPick.isBack) {
+						containers = null; // Reset so it reloads
+						continue selectAccount;
+					}
 
-					let workspacePick: { label: string; path: string; isNew: boolean; isRefresh: boolean; isBack: boolean } | undefined;
-					while (true) {
-						workspacePick = await vscode.window.showQuickPick(
-							[
-								{ label: '$(arrow-left) ..', description: 'Back to Containers', path: '', isNew: false, isRefresh: false, isBack: true },
-								{ label: '$(add) Create New Workspace', description: '', path: '', isNew: true, isRefresh: false, isBack: false },
-								...workspaces.map(w => ({ label: w.name, description: '', path: w.path, isNew: false, isRefresh: false, isBack: false })),
-								{ label: '$(refresh) Refresh Workspaces', description: '', path: '', isNew: false, isRefresh: true, isBack: false }
-							],
-							{ placeHolder: `Select Workspace (${containerPick.label})` }
+					if (containerPick.isRefresh) {
+						containers = null; // Will reload on next iteration
+						continue;
+					}
+
+					if (!containerPick.isSupported) {
+						vscode.window.showWarningMessage(`GTMSense only supports Web and Server containers. "${containerPick.containerType}" containers are not supported.`);
+						continue;
+					}
+
+					// Step 3: Select or create workspace (with loading)
+					type WorkspaceItem = vscode.QuickPickItem & { path: string; isNew: boolean; isRefresh: boolean; isBack: boolean };
+					let workspaces: Awaited<ReturnType<typeof listWorkspaces>> | null = null;
+
+					selectWorkspace: while (true) {
+						const workspacePick = await showQuickPickWithLoading<WorkspaceItem>(
+							`Select Workspace (${containerPick.name})`,
+							async () => {
+								if (!workspaces) {
+									workspaces = await getCachedWorkspaces(containerPick.path);
+								}
+								return [
+									{ label: '$(arrow-left) Back to Containers', description: '', path: '', isNew: false, isRefresh: false, isBack: true },
+									{ label: '$(add) Create New Workspace', description: '', path: '', isNew: true, isRefresh: false, isBack: false },
+									...workspaces.map(w => ({ label: w.name, description: '', path: w.path, isNew: false, isRefresh: false, isBack: false })),
+									{ label: '$(refresh) Refresh Workspaces', description: '', path: '', isNew: false, isRefresh: true, isBack: false }
+								];
+							}
 						);
 
 						if (!workspacePick) {
@@ -280,53 +329,56 @@ export async function activate(context: vscode.ExtensionContext) {
 						}
 
 						if (workspacePick.isRefresh) {
-							workspaces = await getCachedWorkspaces(containerPick.path, true);
-							outputChannel.info(`Refreshed ${workspaces.length} workspaces`);
+							workspaces = null; // Will reload on next iteration
+							cache.workspaces.delete(containerPick.path);
 							continue;
 						}
 
-						break;
-					}
+						let finalWorkspace: { name: string; path: string };
 
-					let finalWorkspace: { name: string; path: string };
+						if (workspacePick.isNew) {
+							const newName = await vscode.window.showInputBox({
+								prompt: 'Enter workspace name',
+								placeHolder: 'My Workspace'
+							});
+							if (!newName) {
+								return;
+							}
+							const created = await vscode.window.withProgress(
+								{ location: vscode.ProgressLocation.Notification, title: 'Creating workspace...' },
+								async () => createWorkspace(containerPick.path, newName)
+							);
+							// Invalidate workspace cache after creating new one
+							cache.workspaces.delete(containerPick.path);
+							finalWorkspace = { name: created.name, path: created.path };
+							vscode.window.showInformationMessage(`Created workspace: ${newName}`);
+						} else {
+							finalWorkspace = { name: workspacePick.label, path: workspacePick.path };
+						}
 
-					if (workspacePick.isNew) {
-						const newName = await vscode.window.showInputBox({
-							prompt: 'Enter workspace name',
-							placeHolder: 'My Workspace'
-						});
-						if (!newName) {
+						// Check if this container + workspace combo is already loaded
+						if (fsProvider.hasContainer(containerPick.name, finalWorkspace.name)) {
+							vscode.window.showWarningMessage(`Container "${containerPick.name}" with workspace "${finalWorkspace.name}" is already loaded`);
 							return;
 						}
-						const created = await createWorkspace(containerPick.path, newName);
-						// Invalidate workspace cache after creating new one
-						cache.workspaces.delete(containerPick.path);
-						finalWorkspace = { name: created.name, path: created.path };
-						vscode.window.showInformationMessage(`Created workspace: ${newName}`);
-					} else {
-						finalWorkspace = { name: workspacePick.label, path: workspacePick.path };
-					}
 
-					// Check if this container + workspace combo is already loaded
-					if (fsProvider.hasContainer(containerPick.name, finalWorkspace.name)) {
-						vscode.window.showWarningMessage(`Container "${containerPick.name}" with workspace "${finalWorkspace.name}" is already loaded`);
-						return;
-					}
+						// Add the container
+						await vscode.window.withProgress(
+							{ location: vscode.ProgressLocation.Notification, title: 'Loading container...' },
+							async () => fsProvider.addContainer(containerPick.name, containerPick.publicId, finalWorkspace.path, finalWorkspace.name, containerPick.containerType)
+						);
 
-					// Add the container
-					await fsProvider.addContainer(containerPick.name, containerPick.publicId, finalWorkspace.path, finalWorkspace.name, containerPick.containerType);
+						// Refresh sidebar
+						sidebarProvider.refresh();
 
-					// Refresh sidebar
-					sidebarProvider.refresh();
+						vscode.window.showInformationMessage(`Loaded container: ${containerPick.name}`);
 
-					vscode.window.showInformationMessage(`Loaded container: ${containerPick.name}`);
-
-					// Break out of all loops after successful load
-					break selectAccount;
+						// Break out of all loops after successful load
+						break selectAccount;
+					} // end selectWorkspace loop
 				} // end selectContainer loop
 			} // end selectAccount loop
 		} catch (error) {
-			
 			vscode.window.showErrorMessage(`Failed to load container: ${error}`);
 		}
 	});
@@ -385,7 +437,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
 		try {
 			const defaultCode = '<script>\n  // Your code here\n</script>';
-			const tag = await createTag(container.workspacePath, tagName, defaultCode);
+			const tag = await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: 'Creating tag...' },
+				async () => createTag(container.workspacePath, tagName, defaultCode)
+			);
 			await fsProvider.addFileEntry(container.key, 'tags', tag, 'tag');
 			sidebarProvider.refresh();
 
@@ -422,7 +477,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
 		try {
 			const defaultCode = 'function() {\n  return undefined;\n}';
-			const variable = await createVariable(container.workspacePath, varName, defaultCode);
+			const variable = await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: 'Creating variable...' },
+				async () => createVariable(container.workspacePath, varName, defaultCode)
+			);
 			await fsProvider.addFileEntry(container.key, 'variables', variable, 'variable');
 			sidebarProvider.refresh();
 
@@ -462,7 +520,10 @@ export async function activate(context: vscode.ExtensionContext) {
 		const templateType: 'web' | 'server' = containerTypeLower.includes('server') ? 'server' : 'web';
 
 		try {
-			const template = await createTemplate(container.workspacePath, templateName, templateType);
+			const template = await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: 'Creating template...' },
+				async () => createTemplate(container.workspacePath, templateName, templateType)
+			);
 			const jsFileName = fsProvider.addTemplateEntry(container.key, template);
 			sidebarProvider.refresh();
 
@@ -500,7 +561,10 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 
 		try {
-			const result = await fsProvider.pushChanges();
+			const result = await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: 'Pushing changes to GTM...', cancellable: false },
+				async () => fsProvider.pushChanges()
+			);
 			sidebarProvider.refresh();
 
 			if (result.failed === 0) {
@@ -569,7 +633,10 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 
 		try {
-			await fsProvider.deleteFile(item.uri);
+			await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: `Deleting ${itemType}...` },
+				async () => fsProvider.deleteFile(item.uri!)
+			);
 			sidebarProvider.refresh();
 			vscode.window.showInformationMessage(`Deleted ${itemType}: ${itemName}`);
 		} catch (error) {
@@ -709,7 +776,23 @@ export async function activate(context: vscode.ExtensionContext) {
 
 		await authProvider.clearAllSessions();
 		accountProvider.refresh();
+		updateLoginContext();
 		vscode.window.showInformationMessage('Signed out of GTMSense');
+	});
+
+	// Command to sign in
+	const signInCommand = vscode.commands.registerCommand('gtmsense.signIn', async () => {
+		try {
+			// This will trigger the auth flow
+			await vscode.authentication.getSession('gtm-google', [
+				'https://www.googleapis.com/auth/tagmanager.edit.containers',
+				'https://www.googleapis.com/auth/userinfo.email'
+			], { createIfNone: true });
+			accountProvider.refresh();
+			updateLoginContext();
+		} catch (error) {
+			vscode.window.showErrorMessage(`Sign in failed: ${error}`);
+		}
 	});
 
 	// Command to create a new workspace for a container
@@ -748,7 +831,10 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 
 		try {
-			const created = await createWorkspace(containerPath, workspaceName);
+			const created = await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: 'Creating workspace...' },
+				async () => createWorkspace(containerPath, workspaceName)
+			);
 			// Invalidate workspace cache
 			cache.workspaces.delete(containerPath);
 
@@ -759,7 +845,10 @@ export async function activate(context: vscode.ExtensionContext) {
 			}
 
 			// Load the new workspace
-			await fsProvider.addContainer(containerName, existingContainer.publicId, created.path, created.name, existingContainer.containerType);
+			await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: 'Loading workspace...' },
+				async () => fsProvider.addContainer(containerName, existingContainer.publicId, created.path, created.name, existingContainer.containerType)
+			);
 			sidebarProvider.refresh();
 
 			vscode.window.showInformationMessage(`Created and loaded workspace: ${workspaceName}`);
@@ -776,7 +865,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	context.subscriptions.push(loadContainerCommand, unloadContainerCommand, createTagCommand, createVariableCommand, createTemplateCommand, createWorkspaceCommand, pushChangesCommand, discardChangesCommand, deleteItemCommand, discardItemChangesCommand, renameItemCommand, signOutCommand);
+	context.subscriptions.push(loadContainerCommand, unloadContainerCommand, createTagCommand, createVariableCommand, createTemplateCommand, createWorkspaceCommand, pushChangesCommand, discardChangesCommand, deleteItemCommand, discardItemChangesCommand, renameItemCommand, signOutCommand, signInCommand);
 }
 
 async function pickContainer(fsProvider: GtmFileSystemProvider): Promise<string | undefined> {

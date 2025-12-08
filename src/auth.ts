@@ -90,6 +90,12 @@ export class GoogleAuthenticationProvider implements vscode.AuthenticationProvid
 						if (newTokens.refreshToken) {
 							stored.refreshToken = newTokens.refreshToken;
 						}
+						// Re-fetch email if it was a fallback value
+						if (stored.account.label === 'Google Account') {
+							const email = await this.fetchUserEmail(stored.accessToken);
+							stored.account.id = email;
+							stored.account.label = email;
+						}
 						await this.storeSessions(storedSessions);
 					} catch {
 						// Refresh failed, session is invalid

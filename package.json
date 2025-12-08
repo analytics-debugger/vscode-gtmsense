@@ -79,6 +79,11 @@
         "icon": "$(sign-out)"
       },
       {
+        "command": "gtmsense.signIn",
+        "title": "GTM-SENSE: Sign In with Google",
+        "icon": "$(sign-in)"
+      },
+      {
         "command": "gtmsense.createWorkspace",
         "title": "GTM-SENSE: Create Workspace",
         "icon": "$(add)"
@@ -114,21 +119,35 @@
     "views": {
       "gtm-explorer": [
         {
+          "id": "gtmWelcome",
+          "name": "Welcome",
+          "when": "!gtmsense.isLoggedIn",
+          "initialSize": 1
+        },
+        {
           "id": "gtmContainers",
           "name": "Containers",
-          "icon": "$(tag)"
+          "icon": "$(tag)",
+          "when": "gtmsense.isLoggedIn",
+          "visibility": "visible"
         },
         {
           "id": "gtmAccount",
           "name": "Account",
-          "icon": "$(account)"
+          "icon": "$(account)",
+          "when": "gtmsense.isLoggedIn",
+          "visibility": "visible"
         }
       ]
     },
     "viewsWelcome": [
       {
+        "view": "gtmWelcome",
+        "contents": "$(tag) **GTMSense**\n\nSign in with your Google account to access and edit your GTM containers.\n\n[$(sign-in) Sign In with Google](command:gtmsense.signIn)"
+      },
+      {
         "view": "gtmContainers",
-        "contents": "No containers loaded.\n[Load Container](command:gtmsense.loadContainer)"
+        "contents": "No containers loaded.\n\n[$(add) Load Container](command:gtmsense.loadContainer)"
       }
     ],
     "menus": {
