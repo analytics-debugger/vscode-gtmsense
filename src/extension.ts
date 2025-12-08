@@ -507,22 +507,34 @@ export async function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
+		// Ask for template kind (Tag or Variable)
+		const templateKindPick = await vscode.window.showQuickPick(
+			[
+				{ label: '$(tag) Tag Template', description: 'Create a custom tag template', value: 'tag' as const },
+				{ label: '$(symbol-variable) Variable Template', description: 'Create a custom variable (macro) template', value: 'variable' as const }
+			],
+			{ placeHolder: 'Select template type' }
+		);
+		if (!templateKindPick) {
+			return;
+		}
+
 		const templateName = await vscode.window.showInputBox({
-			prompt: 'Enter template name',
-			placeHolder: 'My Custom Template'
+			prompt: `Enter ${templateKindPick.value} template name`,
+			placeHolder: templateKindPick.value === 'tag' ? 'My Custom Tag Template' : 'My Custom Variable Template'
 		});
 		if (!templateName) {
 			return;
 		}
 
-		// Determine template type from container type
+		// Determine container context from container type
 		const containerTypeLower = container.containerType.toLowerCase();
-		const templateType: 'web' | 'server' = containerTypeLower.includes('server') ? 'server' : 'web';
+		const containerContext: 'web' | 'server' = containerTypeLower.includes('server') ? 'server' : 'web';
 
 		try {
 			const template = await vscode.window.withProgress(
 				{ location: vscode.ProgressLocation.Notification, title: 'Creating template...' },
-				async () => createTemplate(container.workspacePath, templateName, templateType)
+				async () => createTemplate(container.workspacePath, templateName, containerContext, templateKindPick.value)
 			);
 			const jsFileName = fsProvider.addTemplateEntry(container.key, template);
 			sidebarProvider.refresh();
@@ -560,16 +572,51 @@ export async function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
+		// Get unique container keys that have modified files (to reload after push)
+		const affectedContainerKeys = [...new Set(modifiedFiles.map(f => f.containerName))];
+
 		try {
 			const result = await vscode.window.withProgress(
 				{ location: vscode.ProgressLocation.Notification, title: 'Pushing changes to GTM...', cancellable: false },
 				async () => fsProvider.pushChanges()
 			);
-			sidebarProvider.refresh();
 
 			if (result.failed === 0) {
+				// Reload all affected workspaces to get fresh data from API
+				await vscode.window.withProgress(
+					{ location: vscode.ProgressLocation.Notification, title: 'Reloading workspaces...', cancellable: false },
+					async () => {
+						for (const containerKey of affectedContainerKeys) {
+							const container = fsProvider.getContainers().find(c => c.key === containerKey);
+							if (container) {
+								// Close any open files from this workspace
+								const gtmTabs = vscode.window.tabGroups.all
+									.flatMap(group => group.tabs)
+									.filter(tab => {
+										const input = tab.input;
+										if (input && typeof input === 'object' && 'uri' in input) {
+											const uri = input.uri as vscode.Uri;
+											return uri.scheme === 'gtmsense' && uri.path.startsWith(`/${containerKey}/`);
+										}
+										return false;
+									});
+
+								for (const tab of gtmTabs) {
+									await vscode.window.tabGroups.close(tab);
+								}
+
+								// Remove and re-add the container
+								fsProvider.removeContainer(containerKey);
+								await fsProvider.addContainer(container.name, container.publicId, container.workspacePath, container.workspaceName, container.containerType);
+							}
+						}
+					}
+				);
+
+				sidebarProvider.refresh();
 				vscode.window.showInformationMessage(`Successfully pushed ${result.success} file(s) to GTM`);
 			} else {
+				sidebarProvider.refresh();
 				for (const err of result.errors) {
 					outputChannel.error(`${err.fileName}: ${err.error}`);
 				}
@@ -606,8 +653,34 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage('All changes discarded');
 	});
 
-	// Command to delete a tag or variable
-	const deleteItemCommand = vscode.commands.registerCommand('gtmsense.deleteItem', async (item?: { uri?: vscode.Uri }) => {
+	// Command to delete a tag, variable, or template
+	const deleteItemCommand = vscode.commands.registerCommand('gtmsense.deleteItem', async (item?: { uri?: vscode.Uri; itemType?: string; containerName?: string; templateName?: string }) => {
+		// Handle template deletion (from template tree item)
+		if (item?.itemType === 'template' && item.containerName && item.templateName) {
+			const confirm = await vscode.window.showWarningMessage(
+				`Delete template "${item.templateName}" from GTM? This cannot be undone.`,
+				{ modal: true },
+				'Delete'
+			);
+
+			if (confirm !== 'Delete') {
+				return;
+			}
+
+			try {
+				await vscode.window.withProgress(
+					{ location: vscode.ProgressLocation.Notification, title: 'Deleting template...' },
+					async () => fsProvider.deleteTemplateByName(item.containerName!, item.templateName!)
+				);
+				sidebarProvider.refresh();
+				vscode.window.showInformationMessage(`Deleted template: ${item.templateName}`);
+			} catch (error) {
+				vscode.window.showErrorMessage(`Failed to delete template: ${error}`);
+			}
+			return;
+		}
+
+		// Handle tag/variable deletion (from file tree item)
 		if (!item?.uri) {
 			vscode.window.showErrorMessage('No item selected');
 			return;
@@ -674,8 +747,46 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage(`Discarded changes to ${itemName}`);
 	});
 
-	// Command to rename a tag or variable
-	const renameItemCommand = vscode.commands.registerCommand('gtmsense.renameItem', async (item?: { uri?: vscode.Uri }) => {
+	// Command to rename a tag, variable, or template
+	const renameItemCommand = vscode.commands.registerCommand('gtmsense.renameItem', async (item?: { uri?: vscode.Uri; itemType?: string; containerName?: string; templateName?: string }) => {
+		// Handle template rename
+		if (item?.itemType === 'template' && item.containerName && item.templateName) {
+			const template = fsProvider.getTemplate(item.containerName, item.templateName);
+			if (!template) {
+				vscode.window.showErrorMessage('Template not found');
+				return;
+			}
+
+			const currentName = template.name;
+			const newName = await vscode.window.showInputBox({
+				prompt: 'Enter new name for template',
+				value: currentName,
+				validateInput: (value) => {
+					if (!value || value.trim().length === 0) {
+						return 'Name cannot be empty';
+					}
+					if (value === currentName) {
+						return 'Name must be different from current name';
+					}
+					return undefined;
+				}
+			});
+
+			if (!newName) {
+				return;
+			}
+
+			try {
+				fsProvider.renameTemplate(item.containerName, item.templateName, newName);
+				sidebarProvider.refresh();
+				vscode.window.showInformationMessage(`Renamed template: ${currentName} → ${newName} (pending push)`);
+			} catch (error) {
+				vscode.window.showErrorMessage(`Failed to rename template: ${error}`);
+			}
+			return;
+		}
+
+		// Handle tag/variable rename
 		if (!item?.uri) {
 			vscode.window.showErrorMessage('No item selected');
 			return;
@@ -857,6 +968,69 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	// Command to reload a workspace (refresh from GTM API)
+	const reloadWorkspaceCommand = vscode.commands.registerCommand('gtmsense.reloadWorkspace', async (item?: { containerName?: string; workspaceName?: string }) => {
+		if (!item?.containerName) {
+			vscode.window.showErrorMessage('No workspace selected');
+			return;
+		}
+
+		const containerKey = item.containerName; // This is actually the container key (e.g., "Container Name (Workspace)")
+		const container = fsProvider.getContainers().find(c => c.key === containerKey);
+
+		if (!container) {
+			vscode.window.showErrorMessage('Workspace not found');
+			return;
+		}
+
+		// Check for pending changes in this workspace
+		const modifiedFiles = fsProvider.getModifiedFilesForContainer(containerKey);
+		if (modifiedFiles.length > 0) {
+			const confirm = await vscode.window.showWarningMessage(
+				`You have ${modifiedFiles.length} unpushed change(s) in "${container.workspaceName}". Reloading will discard these changes.`,
+				{ modal: true },
+				'Reload Anyway',
+				'Cancel'
+			);
+
+			if (confirm !== 'Reload Anyway') {
+				return;
+			}
+		}
+
+		try {
+			// Close any open files from this workspace
+			const gtmTabs = vscode.window.tabGroups.all
+				.flatMap(group => group.tabs)
+				.filter(tab => {
+					const input = tab.input;
+					if (input && typeof input === 'object' && 'uri' in input) {
+						const uri = input.uri as vscode.Uri;
+						return uri.scheme === 'gtmsense' && uri.path.startsWith(`/${containerKey}/`);
+					}
+					return false;
+				});
+
+			for (const tab of gtmTabs) {
+				await vscode.window.tabGroups.close(tab);
+			}
+
+			// Remove the container
+			fsProvider.removeContainer(containerKey);
+
+			// Re-add the container (this will fetch fresh data from the API)
+			await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: `Reloading workspace "${container.workspaceName}"...` },
+				async () => fsProvider.addContainer(container.name, container.publicId, container.workspacePath, container.workspaceName, container.containerType)
+			);
+
+			sidebarProvider.refresh();
+			vscode.window.showInformationMessage(`Reloaded workspace: ${container.workspaceName}`);
+		} catch (error) {
+			vscode.window.showErrorMessage(`Failed to reload workspace: ${error}`);
+		}
+	});
+
 	// Refresh sidebar and badge when modifications change
 	context.subscriptions.push(
 		fsProvider.onDidChangeModified(() => {
@@ -865,7 +1039,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	context.subscriptions.push(loadContainerCommand, unloadContainerCommand, createTagCommand, createVariableCommand, createTemplateCommand, createWorkspaceCommand, pushChangesCommand, discardChangesCommand, deleteItemCommand, discardItemChangesCommand, renameItemCommand, signOutCommand, signInCommand);
+	context.subscriptions.push(loadContainerCommand, unloadContainerCommand, createTagCommand, createVariableCommand, createTemplateCommand, createWorkspaceCommand, reloadWorkspaceCommand, pushChangesCommand, discardChangesCommand, deleteItemCommand, discardItemChangesCommand, renameItemCommand, signOutCommand, signInCommand);
 }
 
 async function pickContainer(fsProvider: GtmFileSystemProvider): Promise<string | undefined> {

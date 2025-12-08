@@ -193,12 +193,13 @@ export async function createVariable(workspacePath: string, name: string, javasc
 	});
 }
 
-export async function createTemplate(workspacePath: string, name: string, templateType: 'web' | 'server'): Promise<GtmTemplate> {
-	const jsSection = templateType === 'web' ? '___SANDBOXED_JS_FOR_WEB_TEMPLATE___' : '___SANDBOXED_JS_FOR_SERVER___';
+export async function createTemplate(workspacePath: string, name: string, containerContext: 'web' | 'server', templateKind: 'tag' | 'variable'): Promise<GtmTemplate> {
+	const jsSection = containerContext === 'web' ? '___SANDBOXED_JS_FOR_WEB_TEMPLATE___' : '___SANDBOXED_JS_FOR_SERVER___';
+	const templateType = templateKind === 'tag' ? 'TAG' : 'MACRO';
 	const defaultTemplateData = `___INFO___
 
 {
-  "type": "TAG",
+  "type": "${templateType}",
   "id": "cvt_temp_public_id",
   "version": 1,
   "securityGroups": [],
@@ -206,7 +207,7 @@ export async function createTemplate(workspacePath: string, name: string, templa
   "brand": {},
   "description": "",
   "containerContexts": [
-    "${templateType === 'web' ? 'WEB' : 'SERVER'}"
+    "${containerContext === 'web' ? 'WEB' : 'SERVER'}"
   ]
 }
 
@@ -248,6 +249,12 @@ export async function deleteTag(tagPath: string): Promise<void> {
 
 export async function deleteVariable(variablePath: string): Promise<void> {
 	await gtmFetch<void>(`/${variablePath}`, {
+		method: 'DELETE',
+	});
+}
+
+export async function deleteTemplate(templatePath: string): Promise<void> {
+	await gtmFetch<void>(`/${templatePath}`, {
 		method: 'DELETE',
 	});
 }
@@ -378,4 +385,158 @@ export function getTemplateType(templateData: string): 'web' | 'server' | 'unkno
 		return 'server';
 	}
 	return 'unknown';
+}
+
+// API to permission mapping for GTM templates
+const API_PERMISSION_MAP: Record<string, { publicId: string; params?: Record<string, unknown> }> = {
+	// Logging
+	'logToConsole': { publicId: 'logging', params: { environments: { type: 1, string: 'debug' } } },
+	// Access globals (window)
+	'copyFromWindow': { publicId: 'access_globals', params: { keys: { type: 2, listItem: [] } } },
+	'setInWindow': { publicId: 'access_globals', params: { keys: { type: 2, listItem: [] } } },
+	'callInWindow': { publicId: 'access_globals', params: { keys: { type: 2, listItem: [] } } },
+	'aliasInWindow': { publicId: 'access_globals', params: { keys: { type: 2, listItem: [] } } },
+	'createArgumentsQueue': { publicId: 'access_globals', params: { keys: { type: 2, listItem: [] } } },
+	'createQueue': { publicId: 'access_globals', params: { keys: { type: 2, listItem: [] } } },
+	// Inject script
+	'injectScript': { publicId: 'inject_script', params: { urls: { type: 2, listItem: [] } } },
+	'injectHiddenIframe': { publicId: 'inject_hidden_iframe', params: { urls: { type: 2, listItem: [] } } },
+	// Cookies
+	'getCookieValues': { publicId: 'get_cookies', params: { cookieAccess: { type: 1, string: 'specific' }, cookieNames: { type: 2, listItem: [] } } },
+	'setCookie': { publicId: 'set_cookies', params: { cookieAccess: { type: 1, string: 'specific' }, cookieNames: { type: 2, listItem: [] } } },
+	// URL
+	'getUrl': { publicId: 'get_url', params: { urlParts: { type: 1, string: 'any' }, queriesAllowed: { type: 1, string: 'any' } } },
+	// Referrer
+	'getReferrerUrl': { publicId: 'get_referrer', params: { urlParts: { type: 1, string: 'any' }, queriesAllowed: { type: 1, string: 'any' } } },
+	'getReferrerQueryParameters': { publicId: 'get_referrer', params: { urlParts: { type: 1, string: 'any' }, queriesAllowed: { type: 1, string: 'any' } } },
+	// Read data layer
+	'copyFromDataLayer': { publicId: 'read_data_layer', params: { keyPatterns: { type: 2, listItem: [] } } },
+	// Send pixel
+	'sendPixel': { publicId: 'send_pixel', params: { allowedUrls: { type: 1, string: 'any' } } },
+	// Local storage
+	'localStorage': { publicId: 'access_local_storage', params: { keys: { type: 2, listItem: [] } } },
+	// Read title
+	'readTitle': { publicId: 'read_title' },
+	// Read character set
+	'readCharacterSet': { publicId: 'read_character_set' },
+	// Query permission
+	'queryPermission': { publicId: 'query_permission' },
+	// HTTP requests (server-side)
+	'sendHttpGet': { publicId: 'send_http' },
+	'sendHttpRequest': { publicId: 'send_http' },
+	'getGoogleScript': { publicId: 'send_http' },
+	// BigQuery
+	'BigQuery': { publicId: 'use_bigquery' },
+	// Firestore
+	'Firestore': { publicId: 'use_firestore' },
+	// Google Auth
+	'getGoogleAuth': { publicId: 'use_google_credentials' },
+	// Return response
+	'returnResponse': { publicId: 'return_response' },
+	// Set response headers/body/status
+	'setResponseHeader': { publicId: 'access_response' },
+	'setResponseBody': { publicId: 'access_response' },
+	'setResponseStatus': { publicId: 'access_response' },
+	'setPixelResponse': { publicId: 'access_response' },
+	// Read request
+	'getRequestHeader': { publicId: 'read_request' },
+	'getRequestBody': { publicId: 'read_request' },
+	'getRequestMethod': { publicId: 'read_request' },
+	'getRequestPath': { publicId: 'read_request' },
+	'getRequestQueryString': { publicId: 'read_request' },
+	'getRequestQueryParameter': { publicId: 'read_request' },
+	'getRequestQueryParameters': { publicId: 'read_request' },
+	// Run container
+	'runContainer': { publicId: 'run_container' },
+	// Template storage
+	'templateDataStorage': { publicId: 'access_template_storage' },
+};
+
+// Permission configuration interface
+interface PermissionConfig {
+	instance: {
+		key: {
+			publicId: string;
+			vpiVersion: string;
+		};
+		param?: Array<{
+			key: string;
+			value: unknown;
+		}>;
+	};
+	isRequired: boolean;
+}
+
+// Detect required permissions from template JavaScript code
+export function detectRequiredPermissions(jsCode: string): PermissionConfig[] {
+	const detectedPermissions = new Map<string, PermissionConfig>();
+
+	// Check for each API in the code
+	for (const [apiName, permissionInfo] of Object.entries(API_PERMISSION_MAP)) {
+		// Simple check: does the code contain this API name in quotes (for require) or as a function call?
+		const found =
+			jsCode.includes(`'${apiName}'`) ||  // require('apiName')
+			jsCode.includes(`"${apiName}"`) ||  // require("apiName")
+			new RegExp(`\\b${apiName}\\s*\\(`).test(jsCode);  // apiName( - direct call
+
+		if (found && !detectedPermissions.has(permissionInfo.publicId)) {
+			const permission: PermissionConfig = {
+				instance: {
+					key: {
+						publicId: permissionInfo.publicId,
+						vpiVersion: '1'
+					}
+				},
+				isRequired: true
+			};
+
+			// Add params if defined
+			if (permissionInfo.params) {
+				permission.instance.param = Object.entries(permissionInfo.params).map(([key, value]) => ({
+					key,
+					value
+				}));
+			}
+
+			detectedPermissions.set(permissionInfo.publicId, permission);
+		}
+	}
+
+	return Array.from(detectedPermissions.values());
+}
+
+// Update permissions section in template data based on JS code
+export function updateTemplatePermissions(templateData: string): string {
+	const sections = parseTemplateSections(templateData);
+	console.log('Parsed sections:', sections.map(s => s.name));
+
+	// Find the JS section (section names are stored WITHOUT underscores)
+	const jsSection = sections.find(s =>
+		s.name === 'SANDBOXED_JS_FOR_WEB_TEMPLATE' ||
+		s.name === 'SANDBOXED_JS_FOR_SERVER'
+	);
+
+	if (!jsSection) {
+		console.log('No JS section found');
+		return templateData;
+	}
+
+	console.log('JS section content:', jsSection.content.substring(0, 200));
+
+	// Detect required permissions from the JS code
+	const permissions = detectRequiredPermissions(jsSection.content);
+	console.log('Detected permissions:', JSON.stringify(permissions));
+
+	// Find the permissions section (section names are stored WITHOUT underscores)
+	const permissionsSectionIndex = sections.findIndex(s => s.name === 'WEB_PERMISSIONS');
+
+	if (permissionsSectionIndex === -1) {
+		console.log('No permissions section found');
+		return templateData;
+	}
+
+	// Update the permissions section
+	sections[permissionsSectionIndex].content = JSON.stringify(permissions, null, 2);
+
+	return rebuildTemplate(sections);
 }

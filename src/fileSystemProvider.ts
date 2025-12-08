@@ -11,10 +11,12 @@ import {
 	updateTemplate,
 	deleteTag,
 	deleteVariable,
+	deleteTemplate,
 	extractCode,
 	updateCode,
 	parseTemplateSections,
 	updateTemplateSection,
+	detectRequiredPermissions,
 } from './gtmClient';
 
 interface FileEntry {
@@ -456,8 +458,60 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 			this.modifiedFiles.delete(uri.toString());
 		}
 
+		// Auto-detect and update permissions when saving a JS section
+		if (entry.itemType === 'template-section' && entry.sectionName &&
+			(entry.sectionName === 'SANDBOXED_JS_FOR_WEB_TEMPLATE' || entry.sectionName === 'SANDBOXED_JS_FOR_SERVER')) {
+			this.updatePermissionsForTemplate(uri, containerName, parts, entry.gtmItem as GtmTemplate, newCode);
+		}
+
 		this._onDidChangeModified.fire();
 		this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+	}
+
+	// Update the permissions section file based on JS code
+	private updatePermissionsForTemplate(jsUri: vscode.Uri, containerName: string, parts: string[], template: GtmTemplate, jsCode: string): void {
+		// Detect required permissions from the JS code
+		const permissions = detectRequiredPermissions(jsCode);
+		const permissionsJson = JSON.stringify(permissions, null, 2);
+
+		// Find the permissions file URI
+		// Path: /containerName/templates/templateName/WEB_PERMISSIONS.json
+		const templateName = parts[2]; // templates folder
+		const permissionsUri = vscode.Uri.from({
+			scheme: 'gtmsense',
+			path: `/${containerName}/templates/${templateName}/WEB_PERMISSIONS.json`
+		});
+
+		// Try to find and update the permissions entry
+		try {
+			const permEntry = this.lookupAsFile(permissionsUri);
+			const newPermData = new TextEncoder().encode(permissionsJson);
+			const originalPermCode = this.extractItemCode(permEntry.gtmItem, permEntry.itemType, permEntry.sectionName);
+
+			// Update local cache
+			permEntry.data = newPermData;
+			permEntry.mtime = Date.now();
+
+			// Track as modified if changed
+			if (permissionsJson !== originalPermCode) {
+				this.modifiedFiles.set(permissionsUri.toString(), {
+					uri: permissionsUri,
+					containerName,
+					folder: 'templates',
+					fileName: permEntry.name,
+					itemType: 'template-section',
+					gtmItem: template,
+					newCode: permissionsJson,
+					sectionName: 'WEB_PERMISSIONS',
+				});
+			}
+
+			// Fire change event for the permissions file
+			this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri: permissionsUri }]);
+		} catch {
+			// Permissions file not found, ignore
+			console.log('Permissions file not found for template:', templateName);
+		}
 	}
 
 	createDirectory(): void {
@@ -516,6 +570,59 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		return undefined;
 	}
 
+	// Get template info from container and template name
+	getTemplate(containerName: string, templateName: string): GtmTemplate | undefined {
+		const containerDir = this.root.entries.get(containerName);
+		if (!containerDir || containerDir.type !== 'directory') {
+			return undefined;
+		}
+		const templatesDir = containerDir.entries.get('templates');
+		if (!templatesDir || templatesDir.type !== 'directory') {
+			return undefined;
+		}
+		const templateDir = templatesDir.entries.get(templateName);
+		if (!templateDir || templateDir.type !== 'directory') {
+			return undefined;
+		}
+		// Get the template from any section file
+		for (const entry of templateDir.entries.values()) {
+			if (entry.type === 'file' && entry.gtmItem) {
+				return entry.gtmItem as GtmTemplate;
+			}
+		}
+		return undefined;
+	}
+
+	// Delete a template
+	async deleteTemplateByName(containerName: string, templateName: string): Promise<void> {
+		const template = this.getTemplate(containerName, templateName);
+		if (!template) {
+			throw new Error('Template not found');
+		}
+
+		// Delete from GTM
+		await deleteTemplate(template.path);
+
+		// Remove from local cache
+		const containerDir = this.root.entries.get(containerName);
+		if (containerDir && containerDir.type === 'directory') {
+			const templatesDir = containerDir.entries.get('templates');
+			if (templatesDir && templatesDir.type === 'directory') {
+				// Remove any modified files for this template
+				const templatePath = `/${containerName}/templates/${templateName}`;
+				for (const [key, mod] of this.modifiedFiles.entries()) {
+					if (mod.uri.path.startsWith(templatePath)) {
+						this.modifiedFiles.delete(key);
+					}
+				}
+				// Remove the template directory
+				templatesDir.entries.delete(templateName);
+			}
+		}
+
+		this._onDidChangeModified.fire();
+	}
+
 	getModifiedFiles(): ModifiedFile[] {
 		return Array.from(this.modifiedFiles.values());
 	}
@@ -538,7 +645,7 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		const errors: Array<{ fileName: string; error: string }> = [];
 
 		// Group template section changes by template path
-		const templateChanges = new Map<string, { template: GtmTemplate; sections: Map<string, string> }>();
+		const templateChanges = new Map<string, { template: GtmTemplate; sections: Map<string, string>; newName?: string }>();
 
 		for (const modified of this.modifiedFiles.values()) {
 			if (modified.itemType === 'template-section' && modified.sectionName) {
@@ -550,20 +657,30 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 					});
 				}
 				templateChanges.get(templatePath)!.sections.set(modified.sectionName, modified.newCode);
+				// Capture rename if present
+				if (modified.newName) {
+					templateChanges.get(templatePath)!.newName = modified.newName;
+				}
 			}
 		}
 
 		// Push template changes (grouped by template)
-		for (const [templatePath, { template, sections }] of templateChanges) {
+		for (const [templatePath, { template, sections, newName }] of templateChanges) {
 			try {
 				let updatedTemplateData = template.templateData;
 				for (const [sectionName, newContent] of sections) {
+					console.log(`Updating section ${sectionName} with new content length: ${newContent.length}`);
 					updatedTemplateData = updateTemplateSection(updatedTemplateData, sectionName, newContent);
 				}
+
 				const updatedTemplate: Partial<GtmTemplate> = {
 					...template,
 					templateData: updatedTemplateData,
 				};
+				// Include name change if renaming
+				if (newName) {
+					updatedTemplate.name = newName;
+				}
 				const pushedItem = await updateTemplate(templatePath, updatedTemplate);
 
 				// Update all section entries with the new template data
@@ -791,5 +908,81 @@ export class GtmFileSystemProvider implements vscode.FileSystemProvider {
 		this._onDidChangeModified.fire();
 
 		return newUri;
+	}
+
+	// Rename a template (marks all sections as modified with the new name)
+	renameTemplate(containerName: string, templateName: string, newName: string): void {
+		const template = this.getTemplate(containerName, templateName);
+		if (!template) {
+			throw new Error('Template not found');
+		}
+
+		const containerDir = this.root.entries.get(containerName);
+		if (!containerDir || containerDir.type !== 'directory') {
+			throw new Error(`Container ${containerName} not found`);
+		}
+		const templatesDir = containerDir.entries.get('templates');
+		if (!templatesDir || templatesDir.type !== 'directory') {
+			throw new Error('Templates folder not found');
+		}
+		const templateDir = templatesDir.entries.get(templateName);
+		if (!templateDir || templateDir.type !== 'directory') {
+			throw new Error('Template not found');
+		}
+
+		// Remove old directory and add with new name
+		templatesDir.entries.delete(templateName);
+		templateDir.name = newName;
+		templatesDir.entries.set(newName, templateDir);
+
+		// Update all modified entries for this template
+		const oldPath = `/${containerName}/templates/${templateName}`;
+		const newPath = `/${containerName}/templates/${newName}`;
+
+		// Collect old modified entries to update
+		const entriesToUpdate: Array<{ oldKey: string; mod: ModifiedFile }> = [];
+		for (const [key, mod] of this.modifiedFiles.entries()) {
+			if (mod.uri.path.startsWith(oldPath)) {
+				entriesToUpdate.push({ oldKey: key, mod });
+			}
+		}
+
+		// Update the entries
+		for (const { oldKey, mod } of entriesToUpdate) {
+			this.modifiedFiles.delete(oldKey);
+			const newUriPath = mod.uri.path.replace(oldPath, newPath);
+			const newUri = vscode.Uri.from({ scheme: 'gtmsense', path: newUriPath });
+			mod.uri = newUri;
+			this.modifiedFiles.set(newUri.toString(), mod);
+		}
+
+		// Mark at least one section as modified with the new name (using INFO section as it's always present)
+		const infoUri = vscode.Uri.from({ scheme: 'gtmsense', path: `${newPath}/INFO.json` });
+		if (!this.modifiedFiles.has(infoUri.toString())) {
+			// Find the INFO section entry
+			for (const entry of templateDir.entries.values()) {
+				if (entry.type === 'file' && entry.sectionName === 'INFO') {
+					const currentCode = new TextDecoder().decode(entry.data);
+					this.modifiedFiles.set(infoUri.toString(), {
+						uri: infoUri,
+						containerName,
+						folder: 'templates',
+						fileName: entry.name,
+						itemType: 'template-section',
+						gtmItem: template,
+						newCode: currentCode,
+						newName: newName, // This signals the rename
+						sectionName: 'INFO',
+					});
+					break;
+				}
+			}
+		} else {
+			// Update existing modified entry with new name
+			const mod = this.modifiedFiles.get(infoUri.toString())!;
+			mod.newName = newName;
+		}
+
+		this._onDidChangeModified.fire();
 	}
 }

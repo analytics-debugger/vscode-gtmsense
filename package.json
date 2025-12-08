@@ -87,6 +87,11 @@
         "command": "gtmsense.createWorkspace",
         "title": "GTM-SENSE: Create Workspace",
         "icon": "$(add)"
+      },
+      {
+        "command": "gtmsense.reloadWorkspace",
+        "title": "GTM-SENSE: Reload Workspace",
+        "icon": "$(refresh)"
       }
     ],
     "languages": [
@@ -179,6 +184,10 @@
           "when": "view == gtmContainers && viewItem == container"
         },
         {
+          "command": "gtmsense.reloadWorkspace",
+          "when": "view == gtmContainers && viewItem == workspace"
+        },
+        {
           "command": "gtmsense.createTag",
           "when": "view == gtmContainers && viewItem == folder-tags"
         },
@@ -201,8 +210,23 @@
           "group": "2_delete"
         },
         {
+          "command": "gtmsense.renameItem",
+          "when": "view == gtmContainers && viewItem == template",
+          "group": "1_edit"
+        },
+        {
+          "command": "gtmsense.deleteItem",
+          "when": "view == gtmContainers && viewItem == template",
+          "group": "2_delete"
+        },
+        {
           "command": "gtmsense.discardItemChanges",
           "when": "view == gtmContainers && viewItem == file-modified",
+          "group": "inline"
+        },
+        {
+          "command": "gtmsense.discardItemChanges",
+          "when": "view == gtmContainers && viewItem == template-section-modified",
           "group": "inline"
         }
       ]
