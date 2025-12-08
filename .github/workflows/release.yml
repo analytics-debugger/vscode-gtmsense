@@ -46,6 +46,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Compile server
+        run: pnpm run compile:server
+
       - name: Run type check
         run: pnpm run check-types
 
@@ -61,7 +64,7 @@ jobs:
       - name: Package extension
         run: |
           mkdir -p releases
-          vsce package -o releases/
+          vsce package --no-dependencies -o releases/
 
       - name: Get extension info
         id: ext_info

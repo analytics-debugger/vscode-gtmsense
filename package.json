@@ -247,7 +247,7 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vscode-test",
-    "vsix": "vsce package -o releases/",
+    "vsix": "vsce package --no-dependencies -o releases/",
     "postinstall": "cd server && npm install",
     "bump:patch": "pnpm version patch --no-git-tag-version && git add package.json && git commit -m \"chore: bump to $(node -p \"require('./package.json').version\")\" && git push",
     "bump:minor": "pnpm version minor --no-git-tag-version && git add package.json && git commit -m \"chore: bump to $(node -p \"require('./package.json').version\")\" && git push",
