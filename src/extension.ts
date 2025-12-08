@@ -205,26 +205,31 @@ export async function activate(context: vscode.ExtensionContext) {
 				}
 
 				selectContainer: while (true) {
-					let containerPick: { label: string; detail?: string; path: string; publicId: string; containerType: string; isSupported: boolean; isRefresh: boolean; isBack: boolean } | undefined;
+					let containerPick: { label: string; name: string; description?: string; detail?: string; path: string; publicId: string; containerType: string; isSupported: boolean; isRefresh: boolean; isBack: boolean } | undefined;
 					while (true) {
 						containerPick = await vscode.window.showQuickPick(
 							[
-								{ label: '$(arrow-left) Back to Accounts', path: '', publicId: '', containerType: '', isSupported: true, isRefresh: false, isBack: true },
+								{ label: '$(arrow-left) Back to Accounts', name: '', path: '', publicId: '', containerType: '', isSupported: true, isRefresh: false, isBack: true },
 								...containers.map(c => {
 									const ctx = c.usageContext?.[0]?.toLowerCase();
 									const isSupported = ctx === 'web' || ctx === 'server';
+									const containerType = formatContainerType(c.usageContext);
 									return {
-										label: `${getContainerTypeIcon(c.usageContext)} ${c.name}`,
-										detail: isSupported ? c.publicId : `${c.publicId} (not supported)`,
+										label: isSupported
+											? `${getContainerTypeIcon(c.usageContext)} ${c.name}`
+											: `$(circle-slash) ${c.name}`,
+										name: c.name,
+										description: containerType,
+										detail: isSupported ? c.publicId : `${c.publicId} — not supported`,
 										path: c.path,
 										publicId: c.publicId,
-										containerType: formatContainerType(c.usageContext),
+										containerType,
 										isSupported,
 										isRefresh: false,
 										isBack: false
 									};
 								}),
-								{ label: '$(refresh) Refresh Containers', path: '', publicId: '', containerType: '', isSupported: true, isRefresh: true, isBack: false }
+								{ label: '$(refresh) Refresh Containers', name: '', path: '', publicId: '', containerType: '', isSupported: true, isRefresh: true, isBack: false }
 							],
 							{ placeHolder: `Select Container (${accountPick.label})` }
 						);
@@ -303,18 +308,18 @@ export async function activate(context: vscode.ExtensionContext) {
 					}
 
 					// Check if this container + workspace combo is already loaded
-					if (fsProvider.hasContainer(containerPick.label, finalWorkspace.name)) {
-						vscode.window.showWarningMessage(`Container "${containerPick.label}" with workspace "${finalWorkspace.name}" is already loaded`);
+					if (fsProvider.hasContainer(containerPick.name, finalWorkspace.name)) {
+						vscode.window.showWarningMessage(`Container "${containerPick.name}" with workspace "${finalWorkspace.name}" is already loaded`);
 						return;
 					}
 
 					// Add the container
-					await fsProvider.addContainer(containerPick.label, containerPick.publicId, finalWorkspace.path, finalWorkspace.name, containerPick.containerType);
+					await fsProvider.addContainer(containerPick.name, containerPick.publicId, finalWorkspace.path, finalWorkspace.name, containerPick.containerType);
 
 					// Refresh sidebar
 					sidebarProvider.refresh();
 
-					vscode.window.showInformationMessage(`Loaded container: ${containerPick.label}`);
+					vscode.window.showInformationMessage(`Loaded container: ${containerPick.name}`);
 
 					// Break out of all loops after successful load
 					break selectAccount;
@@ -452,19 +457,12 @@ export async function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
-		const templateType = await vscode.window.showQuickPick(
-			[
-				{ label: 'Web', description: 'For client-side GTM containers', value: 'web' as const },
-				{ label: 'Server', description: 'For server-side GTM containers', value: 'server' as const }
-			],
-			{ placeHolder: 'Select template type' }
-		);
-		if (!templateType) {
-			return;
-		}
+		// Determine template type from container type
+		const containerTypeLower = container.containerType.toLowerCase();
+		const templateType: 'web' | 'server' = containerTypeLower.includes('server') ? 'server' : 'web';
 
 		try {
-			const template = await createTemplate(container.workspacePath, templateName, templateType.value);
+			const template = await createTemplate(container.workspacePath, templateName, templateType);
 			const jsFileName = fsProvider.addTemplateEntry(container.key, template);
 			sidebarProvider.refresh();
 
